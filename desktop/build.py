@@ -142,6 +142,9 @@ def copy_app():
         shutil.copytree(os.path.join(ROOT, name), os.path.join(OUT, name), ignore=skip)
     os.makedirs(os.path.join(OUT, "desktop"))
     shutil.copy2(os.path.join(HERE, "app.py"), os.path.join(OUT, "desktop", "app.py"))
+    lic = os.path.join(ROOT, "LICENSE")                      # GPL-3.0 asks for its text to travel with the program
+    if os.path.isfile(lic):
+        shutil.copy2(lic, os.path.join(OUT, "LICENSE.txt"))
     with open(os.path.join(OUT, "LICENSES.txt"), "w", encoding="utf-8", newline="\r\n") as f:
         f.write("This folder contains, unchanged:\n"
                 "  Python " + PY_VER + " (python.org), PSF License: runtime\\LICENSE.txt\n"

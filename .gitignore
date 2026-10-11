@@ -1,0 +1,29 @@
+# exported videos and local audio stay out of the repository
+*.mp4
+*.webm
+*.mov
+*.mp3
+*.flac
+*.wav
+*.m4a
+*.zip
+.DS_Store
+Thumbs.db
+
+# whisper.cpp program, models, Python environment and caches: large or generated
+tools/
+models/
+*.bin
+__pycache__/
+*.pyc
+
+# built single-file page (scripts/build_single.py) and the tidy-up leftovers
+dist/
+_old_layout/
+
+# lyrics of commercial songs: keep them local
+examples/tv off - Kendrick Lamar&Lefty Gunplay.lrc
+
+# local search helper (see .ignore)
+.ignore
+.claude/

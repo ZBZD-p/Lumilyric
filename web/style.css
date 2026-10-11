@@ -1,0 +1,552 @@
+/* Layout: one full-screen black stage; the live line sits left-aligned at mid-height, controls float at the edges and fade away while playing. */
+:root{
+  --bg:#000;
+  --fg:#fff;
+  --dim:rgba(255,255,255,.55);
+  --faint:rgba(255,255,255,.16);
+  --hair:rgba(255,255,255,.1);
+  --panel:#0b0b0b;
+  --display:"Archivo","Noto Sans SC","Helvetica Neue",Arial,sans-serif;
+  --zh:"Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+  --ease:cubic-bezier(.16,1,.3,1);
+  --lift-ease:cubic-bezier(.35,0,.25,1);   /* word lift: starts softly, lands softly (same curve as liftE in JS) */
+  color-scheme:dark;
+}
+/* base reset kept in the page itself, so it behaves the same when opened as a local file */
+*,*::before,*::after{box-sizing:border-box}
+[hidden]{display:none!important}
+input,textarea,[contenteditable]{-webkit-user-select:text;user-select:text}   /* typing fields keep selection (the page's text cannot be selected or copied) */
+html,body{height:100%}
+body{-webkit-user-select:none;user-select:none;margin:0;background:var(--bg);color:var(--fg);font-family:var(--zh);overflow:hidden;-webkit-font-smoothing:antialiased}
+body.idle{cursor:none}
+.app{position:relative;height:100%;display:grid;grid-template-rows:auto 1fr auto;padding-inline:clamp(16px,6vw,96px)}
+
+/* top bar */
+.top{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;padding-block:20px 0;transition:opacity .6s var(--ease)}
+.meta{min-width:0;display:flex;flex-direction:column;gap:2px}
+.meta b{font-family:var(--display);font-weight:800;font-size:15px;letter-spacing:.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.meta span{font-size:12px;color:var(--dim);letter-spacing:.04em}
+.ctrls{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.seg{display:flex;border:1px solid var(--hair);border-radius:999px;padding:3px;gap:2px}
+.seg button{all:unset;cursor:pointer;font-size:13px;padding:6px 14px;border-radius:999px;color:var(--dim);transition:background .35s var(--ease),color .35s var(--ease)}
+.seg button[aria-pressed="true"]{background:var(--fg);color:var(--bg)}
+.seg button:focus-visible,.btn:focus-visible,.play:focus-visible{outline:2px solid var(--fg);outline-offset:2px}
+
+/* stage */
+.stage{position:relative;min-height:0}
+.line{position:absolute;left:0;right:0;top:50%;translate:0 -50%;margin-inline:auto;max-width:15em;text-align:center;text-wrap:balance;font-size:calc(clamp(30px,5.4vw,72px) * var(--lyr-s,1));line-height:1.15}
+.line .pri,.line .sub{text-wrap:balance;text-shadow:var(--glow-shadow,none)}
+.line .sub{text-shadow:var(--glow-shadow-sub,none)}
+/* effects panel */
+.fxsec{display:flex;flex-direction:column;gap:14px;padding:16px;border:1px solid var(--hair);border-radius:14px}
+.fxhead{display:flex;justify-content:space-between;align-items:center;gap:12px}
+.fxhead h3{margin:0;font-family:var(--display);font-weight:800;font-size:15px;letter-spacing:.01em}
+.switch{position:relative;width:40px;height:22px;flex:none}
+.switch input{position:absolute;inset:0;opacity:0;margin:0;cursor:pointer;z-index:1}
+.switch span{position:absolute;inset:0;border-radius:999px;background:var(--faint);transition:background .25s var(--ease)}
+.switch span::after{content:"";position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:var(--fg);transition:transform .25s var(--ease)}
+.switch input:checked+span{background:#fff}
+.switch input:checked+span::after{transform:translateX(18px);background:#000}
+.switch input:focus-visible+span{outline:2px solid var(--fg);outline-offset:2px}
+.fxrow{display:grid;grid-template-columns:4.5em 1fr 4.5em;align-items:center;gap:12px;font-size:13px}
+.fxrow label{color:var(--dim)}
+.fxrow output{font-family:var(--mono);font-size:12px;text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.fxrow input[type=range]{height:20px}
+.fxsec.off .fxrow{opacity:.4;pointer-events:none}
+.fxrow .seg{justify-self:start}
+.bgflow{position:fixed;inset:0;width:100%;height:100%;z-index:0;opacity:0;transition:opacity .9s var(--ease);pointer-events:none}
+.bgflow.on{opacity:1}
+.fps{position:fixed;left:50%;top:10px;transform:translateX(-50%);text-align:center;z-index:1000;pointer-events:none;padding:.45em .9em;border-radius:.75em;background:rgba(0,0,0,.6);border:1px solid var(--hair);font-family:var(--mono);font-size:calc(11px * var(--ps,1));line-height:1.5;color:var(--fg);font-variant-numeric:tabular-nums;white-space:pre}
+#fxPerfPos{display:grid;grid-template-columns:repeat(3,1fr);gap:2px;width:100%;grid-column:2/4;border-radius:14px}
+#fxPerfPos button{padding:6px 0;text-align:center}
+.fps[data-pos=tl]{left:10px;transform:none;text-align:left}
+.fps[data-pos=tr]{left:auto;right:10px;transform:none;text-align:right}
+.fps[data-pos=bl]{top:auto;bottom:10px;left:10px;transform:none;text-align:left}
+.fps[data-pos=bc]{top:auto;bottom:10px}
+.fps[data-pos=br]{top:auto;bottom:10px;left:auto;right:10px;transform:none;text-align:right}
+.fps b{font-size:1.27em}
+.fps.slow b{color:#ffb35c}.fps.bad b{color:#ff6b6b}
+.glview{position:fixed;inset:0;width:100%;height:100%;z-index:0;pointer-events:none;display:none}
+/* cover panel (Apple Music style); position and sizes are set from coverLayout() so the page matches the export */
+.covpanel{position:fixed;z-index:0;pointer-events:none}
+.covart{position:relative;border-radius:var(--cr);background:#222 center/cover no-repeat;box-shadow:0 calc(var(--cs) * .04) calc(var(--cs) * .12) rgba(0,0,0,.45)}
+.covold{position:absolute;inset:0;border-radius:inherit;background:center/cover no-repeat;opacity:0;pointer-events:none}
+.covti,.covar{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-family:"Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif}
+.covti{color:#fff;font-weight:700}
+.covar{color:rgba(255,255,255,.6);font-weight:400}
+body.webgl .glview{display:block}
+body.webgl #stage{visibility:hidden}
+.bggrain{position:fixed;inset:0;z-index:0;pointer-events:none;opacity:0;mix-blend-mode:overlay;transition:opacity .9s var(--ease)}
+.bgflow.on+.bggrain{opacity:var(--grain,.025)}
+.pal{display:flex;gap:3px;flex:none}
+.pal i{width:12px;height:12px;border-radius:50%;box-shadow:inset 0 0 0 1px rgba(255,255,255,.2)}
+.app{z-index:1}
+#fxBgSec:not(.flow) .fxbgopt,#fxBgSec:not(.blobs) .fxblobopt{display:none}
+.coverrow{display:flex;align-items:center;flex-wrap:wrap;gap:8px 10px;min-width:0}
+.coverrow .btn{white-space:nowrap}
+.coverrow span{min-width:5em}
+.coverrow img{width:38px;height:38px;flex:none;border-radius:6px;object-fit:cover;background:var(--faint)}
+.coverrow img:not([src]){visibility:hidden}
+.coverrow span{flex:1;min-width:0;font-size:12px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.btn.btn-sm{padding:6px 12px;font-size:12px}
+.modal.drawer .fxrow .coverrow{grid-column:2/4}
+.modal.drawer .fxrow .coverrow+span{display:none}
+.seg.wrap{flex-wrap:wrap;border-radius:16px}
+.field-sel{font:inherit;font-size:14px;color:var(--fg);background:var(--bg);border:1px solid var(--hair);border-radius:10px;padding:7px 10px;justify-self:start}
+.check input[type=radio]{width:16px;height:16px;accent-color:#fff;margin:0}
+@keyframes indet{from{transform:translateX(-100%)}to{transform:translateX(250%)}}
+.fill.busy{width:40%!important;animation:indet 1.2s linear infinite}
+.swatches{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.sw{all:unset;cursor:pointer;width:22px;height:22px;border-radius:50%;border:2px solid transparent;box-shadow:inset 0 0 0 1px rgba(255,255,255,.25)}
+.sw[aria-pressed="true"]{border-color:#fff}
+.sw:focus-visible{outline:2px solid var(--fg);outline-offset:2px}
+.swatches input[type=color]{width:28px;height:24px;padding:0;border:1px solid var(--hair);border-radius:6px;background:none;cursor:pointer}
+.fxdemo{display:grid;place-items:center;height:96px;border-radius:10px;background:#000;border:1px solid var(--hair);font-family:var(--zh);font-weight:900;font-size:34px;letter-spacing:.02em;color:#fff;text-shadow:var(--glow-shadow,none)}
+.line .pri{font-family:var(--lyr-en,var(--display));font-weight:var(--lyr-w,800);letter-spacing:-.02em}
+.line.zh .pri{font-family:var(--lyr-zh,var(--zh));font-weight:var(--lyr-w,900);letter-spacing:.02em}
+.line .w{display:inline-block;animation:pop .9s var(--ease) both;will-change:transform,opacity,filter}
+.line .sub{margin-top:.5em;font-family:var(--lyr-sub,var(--zh));font-weight:var(--lyr-sub-w,400);font-size:calc(.42em * var(--lyr-sub-s,1));letter-spacing:.06em;color:var(--dim);animation:rise 1s var(--ease) both}
+.line.title .pri{font-size:.7em}
+.line.title .sub{font-family:var(--mono);font-size:.26em;letter-spacing:.12em;text-transform:uppercase}
+.line.one{max-width:none;white-space:nowrap;text-wrap:nowrap}
+.line.measure{visibility:hidden;pointer-events:none;left:0;right:auto;width:max-content;max-width:none;white-space:nowrap;translate:none;top:0}
+.line.measure .pri,.line.measure .sub{display:inline-block;animation:none;margin:0}
+.line.out{animation:leaveX var(--xd,.75s) var(--xease,var(--ease)) forwards;pointer-events:none}
+.line.out.xword{animation:none}
+.line.out.xword .w{animation:leaveX var(--xd,.75s) var(--xease,var(--ease)) forwards}
+.line.out.xword .sub{animation:leaveX calc(var(--xd,.75s) + var(--xs,0s)) var(--xease,var(--ease)) forwards}
+@keyframes pop{
+  0%{opacity:0;transform:translateY(.42em) scale(.86);filter:blur(12px)}
+  60%{opacity:1;filter:blur(0)}
+  100%{opacity:1;transform:none;filter:blur(0)}
+}
+@keyframes rise{from{opacity:0;transform:translateY(.6em);filter:blur(6px)}to{opacity:1;transform:none;filter:blur(0)}}
+/* animation presets (body[data-anim]) */
+body[data-anim=fade] .line .w{animation-name:fadein}
+body[data-anim=rise] .line .w{animation-name:riseup}
+body[data-anim=karaoke] .line.live .pri{animation:kline .45s var(--ease) both}
+body[data-anim=karaoke] .line .w{position:relative;will-change:transform;animation:klift var(--kld,.7s) var(--lift-ease) var(--kdl,0s) both}
+body[data-anim=karaoke] .line .pri{--c:100000px}
+body[data-anim=karaoke] .line .kb{--sx:calc(var(--c) - var(--o,0px));color:transparent;-webkit-text-fill-color:transparent;text-shadow:none;
+  background:linear-gradient(90deg,#fff calc(var(--sx) - .225em),rgba(255,255,255,.89) calc(var(--sx) - .1125em),rgba(255,255,255,.65) var(--sx),rgba(255,255,255,.41) calc(var(--sx) + .1125em),rgba(255,255,255,.3) calc(var(--sx) + .225em));-webkit-background-clip:text;background-clip:text}
+body[data-anim=karaoke] .line .kg{position:absolute;left:0;top:0;z-index:-1;color:transparent;-webkit-text-fill-color:transparent;
+  text-shadow:var(--glow-shadow,none);opacity:0;animation:kglow var(--kd,.5s) linear var(--kdl,0s) both;pointer-events:none}
+@keyframes fadein{0%{opacity:0;filter:blur(4px)}70%{opacity:1;filter:blur(0)}100%{opacity:1;filter:blur(0)}}
+@keyframes riseup{0%{opacity:0;transform:translateY(.5em)}60%{opacity:1}100%{opacity:1;transform:none}}
+@keyframes kline{from{opacity:0;transform:translateY(.2em)}to{opacity:1;transform:none}}
+@keyframes klift{from{transform:none}to{transform:translateY(-.05em)}}
+@keyframes kglow{to{opacity:1}}
+@keyframes leaveX{to{opacity:0;transform:translateY(var(--xdy,-.55em)) scale(var(--xsc,.94));filter:blur(var(--xbl,.14em))}}
+
+.drop{position:absolute;inset:12px;border:1px dashed var(--dim);border-radius:18px;display:grid;place-items:center;font-size:15px;color:var(--dim);opacity:0;pointer-events:none;transition:opacity .3s}
+body.dragging .drop{opacity:1}
+
+/* bottom bar */
+.bottom{display:flex;flex-direction:column;gap:12px;padding-block:0 22px;transition:opacity .6s var(--ease)}
+body.idle .top,body.idle .bottom{opacity:0}
+.row{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.play{all:unset;cursor:pointer;width:46px;height:46px;border-radius:50%;background:var(--fg);color:var(--bg);display:grid;place-items:center;flex:none;transition:transform .3s var(--ease)}
+.play:active{transform:scale(.92)}
+.play svg{width:18px;height:18px;fill:currentColor}
+.time{font-family:var(--mono);font-size:12px;color:var(--dim);font-variant-numeric:tabular-nums;white-space:nowrap}
+.bar{flex:1;min-width:120px}
+input[type=range]{width:100%;appearance:none;background:transparent;height:20px;cursor:pointer;margin:0}
+input[type=range]::-webkit-slider-runnable-track{height:2px;background:linear-gradient(var(--fg),var(--fg)) 0/var(--p,0%) 100% no-repeat,var(--faint);border-radius:2px}
+input[type=range]::-moz-range-track{height:2px;background:var(--faint)}
+input[type=range]::-moz-range-progress{height:2px;background:var(--fg)}
+input[type=range]::-webkit-slider-thumb{appearance:none;width:12px;height:12px;border-radius:50%;background:var(--fg);margin-top:-5px}
+input[type=range]::-moz-range-thumb{width:12px;height:12px;border:0;border-radius:50%;background:var(--fg)}
+.btn{all:unset;cursor:pointer;font-size:13px;color:var(--fg);border:1px solid var(--hair);border-radius:999px;padding:7px 14px;transition:border-color .3s}
+.btn:hover{border-color:var(--dim)}
+.status{font-size:12px;color:var(--dim);letter-spacing:.03em}
+.follow-sel{font:inherit;font-size:12px;color:var(--fg);background:transparent;border:1px solid var(--hair);border-radius:999px;padding:6px 10px;max-width:160px}
+.follow-sel option{color:#000}
+.btn.on{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+.status kbd{font-family:var(--mono);font-size:11px;border:1px solid var(--hair);border-radius:4px;padding:0 4px}
+input[type=file]{display:none}
+.nudge{display:flex;align-items:center;border:1px solid var(--hair);border-radius:999px;padding:2px}
+.nbtn,.nval{all:unset;cursor:pointer;font-family:var(--mono);font-size:12px;color:var(--fg);padding:6px 11px;border-radius:999px;font-variant-numeric:tabular-nums}
+.nbtn{font-size:15px;line-height:1;padding:5px 12px}
+.nbtn:hover,.nval:hover{background:var(--faint)}
+.nlab{font-size:12px;color:var(--dim);padding-left:6px}
+.nval{width:7.5ch;text-align:center;cursor:text;padding:6px 4px}
+.nval:focus{background:var(--faint)}
+.nunit{font-family:var(--mono);font-size:12px;color:var(--dim);padding-right:4px}
+.nudge:has(.nval.on){border-color:var(--fg)}
+.nval.on{font-weight:700}
+.nzero{font-size:13px;color:var(--dim)}
+.nbtn:focus-visible,.nval:focus-visible{outline:2px solid var(--fg);outline-offset:1px}
+.btn-solid{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+.btn-solid:hover{border-color:var(--fg);opacity:.88}
+.btn:disabled{opacity:.4;cursor:default}
+.modal{position:fixed;inset:0;z-index:10;display:grid;place-items:center;padding:16px;background:rgba(0,0,0,.78);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}
+.panel{width:min(600px,100%);max-height:100%;overflow-x:hidden;overflow-y:auto;background:var(--panel);border:1px solid var(--hair);border-radius:18px;padding:22px;display:flex;flex-direction:column;gap:16px;animation:rise .5s var(--ease) both}
+.ph{display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap}
+.ph h2{margin:0;font-family:var(--display);font-weight:800;font-size:20px;letter-spacing:-.01em}
+.xinfo{font-family:var(--mono);font-size:11px;color:var(--dim)}
+#xPreview{display:block;width:100%;height:auto;max-height:38vh;object-fit:contain;background:#000;border:1px solid var(--hair);border-radius:10px}
+#xPreview.alpha{background:repeating-conic-gradient(#2a2a2a 0 25%,#161616 0 50%) 0 0/22px 22px}
+.field-wide{grid-column:1/-1}
+.check{display:flex;align-items:center;flex-wrap:wrap;gap:8px;font-size:13px;color:var(--fg);cursor:pointer}
+.check input{width:16px;height:16px;accent-color:#fff;margin:0}
+.fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}
+.field{display:flex;flex-direction:column;gap:6px;font-size:12px;color:var(--dim);letter-spacing:.03em}
+.field select{font:inherit;font-size:14px;color:var(--fg);background:var(--bg);border:1px solid var(--hair);border-radius:10px;padding:9px 10px}
+.field select:focus-visible{outline:2px solid var(--fg);outline-offset:1px}
+.note{margin:0;font-size:12.5px;line-height:1.65;color:var(--dim)}
+.xest{color:var(--fg)}
+.xest b{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.track{height:3px;background:var(--faint);border-radius:3px;overflow:hidden}
+.fill{height:100%;width:0;background:var(--fg);transition:width .25s linear}
+.xmsg{margin:0;min-height:1.4em;white-space:pre-line;font-family:var(--mono);font-size:12px;color:var(--fg);font-variant-numeric:tabular-nums}
+.actions{display:flex;justify-content:flex-end;gap:10px;flex-wrap:wrap}
+.askpanel{width:min(420px,100%)}
+.askrow{display:flex;gap:16px;align-items:center}
+.askrow img{width:88px;height:88px;border-radius:10px;object-fit:cover;flex:none;background:var(--faint)}
+.askrow h2{margin:0 0 6px}
+.askrow .note{margin:0}
+.libq{font:inherit;font-size:15px;color:var(--fg);background:var(--bg);border:1px solid var(--hair);border-radius:12px;padding:12px 14px;width:100%}
+.libq:focus-visible{outline:2px solid var(--fg);outline-offset:1px}
+.libres{display:flex;flex-direction:column;gap:4px;max-height:min(46vh,420px);overflow-y:auto;margin:-4px -6px 0;padding:0 6px}
+.libres:empty{display:none}
+.libitem{all:unset;cursor:pointer;display:grid;grid-template-columns:1fr auto;gap:2px 12px;align-items:center;padding:10px 12px;border-radius:10px;border:1px solid transparent}
+.libitem:hover,.libitem:focus-visible{background:var(--faint);border-color:var(--hair)}
+.libitem:focus-visible{outline:2px solid var(--fg);outline-offset:-2px}
+.libitem b{font-family:var(--display);font-weight:800;font-size:15px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.libitem span{grid-column:1;font-size:12px;color:var(--dim);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.libitem i{grid-column:2;grid-row:1/3;font-style:normal;font-family:var(--mono);font-size:11px;color:var(--dim)}
+.note a{color:var(--fg)}
+.covergrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(112px,1fr));gap:12px;max-height:min(52vh,460px);overflow-y:auto;padding:2px}
+.covergrid:empty{display:none}
+.coveritem{all:unset;cursor:pointer;display:flex;flex-direction:column;gap:5px;min-width:0;border-radius:10px;padding:4px}
+.coveritem:hover,.coveritem:focus-visible{background:var(--faint)}
+.coveritem:focus-visible{outline:2px solid var(--fg);outline-offset:1px}
+.coveritem img{width:100%;aspect-ratio:1;object-fit:cover;border-radius:8px;background:var(--faint)}
+.coveritem b{font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.coveritem span{font-size:11px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.libitem.match i{color:var(--fg)}
+.libitem.match i::before{content:"● ";font-size:9px;vertical-align:1px}
+.xpill{all:unset;cursor:pointer;position:fixed;right:16px;bottom:16px;z-index:9;display:flex;align-items:center;gap:10px;padding:10px 16px;border-radius:999px;background:rgba(14,14,14,.92);border:1px solid var(--hair);font-size:13px;font-family:var(--mono);font-variant-numeric:tabular-nums;box-shadow:0 8px 30px rgba(0,0,0,.6);animation:rise .4s var(--ease) both}
+.xpill::before{content:"";width:8px;height:8px;border-radius:50%;background:#fff;animation:pulse 1.2s ease-in-out infinite}
+.xpill.done::before{animation:none}
+.xpill:hover{border-color:var(--dim)}
+.xpill:focus-visible{outline:2px solid var(--fg);outline-offset:2px}
+body.fx-open .xpill{right:calc(var(--drawer) + 16px)}
+@keyframes pulse{50%{opacity:.25}}
+/* effects drawer: a rounded card floating at the side (a gap all round), no backdrop, the lyrics stay visible and
+   playing beside it. With the glass interface the card is one piece of liquid glass drawn by the GPU layer (glass.js,
+   GLASS_DRAWER): frosted so the settings stay readable, its rim bending the picture behind. */
+:root{--drawer:min(380px,100vw)}
+.app{transition:padding .5s var(--ease)}
+.app{transition:padding-right .5s var(--ease)}          /* the controls make room at the pace the drawer slides */
+body.fx-open .app{padding-right:calc(var(--drawer) + clamp(16px,3vw,48px))}
+.modal.drawer{inset:12px 12px 12px auto;width:var(--drawer);display:block;padding:0;background:none;-webkit-backdrop-filter:none;backdrop-filter:none}
+.modal.drawer .panel{width:100%;height:100%;max-height:none;border-radius:26px;border-width:1px;padding:20px 20px 16px;gap:14px;background:rgba(10,10,10,.94);box-shadow:0 24px 70px rgba(0,0,0,.45);will-change:transform;transform-origin:100% 50%;animation:none}   /* slides in and out from the script (fxSlide, ui-effects.js): a CSS animation here would override it */
+.modal.drawer.closing{pointer-events:none}
+.modal.drawer.prewarm{opacity:.01;pointer-events:none}
+.modal.drawer .actions{margin-top:auto;position:sticky;bottom:-16px;z-index:2;   /* above the switches (z-index 1) scrolled under it */padding:12px 0 16px;background:linear-gradient(transparent,rgba(10,10,10,.94) 30%)}
+.modal.drawer .fxrow{grid-template-columns:3.6em 1fr 5.2em;gap:10px}
+.modal.drawer .fxrow .seg,.modal.drawer .fxrow .swatches{grid-column:2/4}
+.modal.drawer .fxrow .seg+span,.modal.drawer .fxrow .swatches+span{display:none}
+.modal.drawer .seg button{white-space:nowrap;padding:6px 12px}
+.drawer-x{all:unset;cursor:pointer;width:30px;height:30px;display:grid;place-items:center;border-radius:50%;color:var(--dim);font-size:18px;line-height:1}
+.drawer-x:hover{color:var(--fg);background:var(--faint)}
+.drawer-x:focus-visible{outline:2px solid var(--fg);outline-offset:2px}
+.fxtip{margin:-4px 0 0;font-size:12px;line-height:1.6;color:var(--dim)}
+.fxtip button{all:unset;cursor:pointer;color:var(--fg);text-decoration:underline;text-underline-offset:3px}
+@media (max-width:760px){
+  :root{--sheet:min(52vh,460px)}
+  body.fx-open .app{padding-right:clamp(16px,6vw,96px);padding-bottom:var(--sheet)}
+  .modal.drawer{inset:auto 0 0 0;width:100%;height:var(--sheet)}
+  .modal.drawer .panel{border-width:1px 0 0;border-radius:18px 18px 0 0}
+  /* on a phone only the lyrics and the play row stay above the sheet */
+  body.fx-open .top,body.fx-open .bottom .row+.row{display:none}
+  body.fx-open .app{grid-template-rows:1fr auto}
+}
+
+
+@media (max-width:560px){
+  .line{font-size:calc(clamp(26px,8.4vw,40px) * var(--lyr-s,1))}
+  .hint-keys{display:none}
+}
+@media (prefers-reduced-motion:reduce){
+  .line .w,.line .sub{animation:fade .3s linear both!important;filter:none}
+  .line.out,.line.out.xword .w,.line.out.xword .sub{animation:fadeout .3s linear forwards!important}
+  @keyframes fade{from{opacity:0}to{opacity:1}}
+  @keyframes fadeout{to{opacity:0}}
+}
+
+/* ---- 液态玻璃 (body.ui-glass): the glass is drawn by the GPU layer #glassView (glass.js) under each control;
+   the controls only lose their own background and border. Panels use the browser's frosted blur. ---- */
+.glassover{position:fixed;inset:0;width:100%;height:100%;z-index:11;pointer-events:none}    /* glass copied above the settings card (glassOver, glass.js) */
+.glassview{position:fixed;inset:0;width:100%;height:100%;z-index:1;pointer-events:none}   /* above the cover panel, below the controls (.app comes later in the page) */
+body.ui-glass .lg{background:transparent;border-color:transparent!important;box-shadow:none}
+body.ui-glass .lg:hover{background:rgba(255,255,255,.07)}
+body.ui-glass .btn.lg.btn-solid,body.ui-glass .btn.lg.on{background:rgba(255,255,255,.88);color:#000}
+body.ui-glass .play.lg{background:transparent;color:#fff}
+body.ui-glass .seg.lg button[aria-pressed="true"]{background:rgba(255,255,255,.88);color:#000;box-shadow:0 2px 10px rgba(0,0,0,.2)}
+body.ui-glass .modal{background:rgba(0,0,0,.25);-webkit-backdrop-filter:none;backdrop-filter:none}
+body.ui-glass .panel{background:rgba(30,30,32,.45);-webkit-backdrop-filter:blur(26px) saturate(1.7);backdrop-filter:blur(26px) saturate(1.7);
+  border-color:transparent;box-shadow:inset 0 1px 0 rgba(255,255,255,.22),inset 0 0 0 .5px rgba(255,255,255,.1),0 20px 60px rgba(0,0,0,.35)}
+body.ui-glass .modal.drawer{background:none}            /* (the dimming of other dialogs would show as square corners behind the card) */
+body.ui-glass .modal.drawer .panel{background:rgba(26,26,28,.5)}
+body.ui-glass .modal.drawer .actions{background:linear-gradient(transparent,rgba(26,26,28,.55) 40%)}
+/* the GPU layer is drawing the card (body.glass-gpu, set by glass.js): no browser blur under it, only a light dark
+   veil so white text reads on any cover; the sections inside are quiet fills, not glass on glass */
+body.ui-glass.glass-gpu .modal.drawer .panel{background:rgba(16,16,20,.3);-webkit-backdrop-filter:none;backdrop-filter:none;border-color:transparent;box-shadow:none}
+body.ui-glass.glass-gpu .modal.drawer .actions{background:none}
+body.ui-glass.glass-gpu .modal.drawer .actions .btn{background:rgba(40,40,44,.72)}
+body.ui-glass.glass-gpu .modal.drawer .actions .btn.btn-solid{background:rgba(255,255,255,.92)}
+body.ui-glass.glass-gpu .modal.drawer .fxsec{background:rgba(255,255,255,.05);border-color:transparent}
+body.ui-glass .fxsec{background:rgba(255,255,255,.035);border-color:rgba(255,255,255,.09)}
+body.ui-glass .fps.lg,body.ui-glass .xpill.lg{background:transparent}
+
+/* ---- a switch with a sliding thumb (js/seg-thumb.js): the chosen segment's white pill is one element that slides,
+   lifts into glass while pressed and can be dragged; the buttons themselves have no background any more ---- */
+.seg.thumbed{position:relative;touch-action:none;-webkit-user-select:none;user-select:none}
+.seg.thumbed button{position:relative;z-index:1;transition:none;font-weight:700}
+.seg.thumbed button[aria-pressed="true"]{background:none!important;box-shadow:none!important;color:var(--bg)}
+body.ui-glass .seg.thumbed button[aria-pressed="true"]{color:#000}
+.segthumb{position:absolute;left:0;top:0;border-radius:999px;background:var(--fg);pointer-events:none;will-change:transform,width,height,opacity}
+body.ui-glass .segthumb{background:rgba(255,255,255,.88);box-shadow:0 2px 10px rgba(0,0,0,.2)}
+
+/* ---- on / off switches with a liquid-glass knob (js/glass-toggle.js): the track keeps its place, the knob is a real
+   element moved by the script; lifted, it is clear and bends what is under it (backdrop filter #tgLens) ---- */
+.switch{width:44px;height:24px}
+.tg{position:relative;flex:none;width:44px;height:24px;border-radius:999px;transition:none!important}
+.switch .tg{position:absolute;inset:0;width:auto;height:auto}
+.tg::after{content:none!important}
+.tgk{position:absolute;left:0;top:0;border-radius:999px;pointer-events:none;box-shadow:0 1px 3px rgba(0,0,0,.3);will-change:transform,width,height}
+/* --lg-rim (边缘光), --lg-shadow (阴影), --lg-blur (磨砂): the fixed look of this glass; 边缘宽 and 折射 are in the lens
+   itself (GLASS_LOOK, glass.js). */
+:root{--lg-rim:.25;--lg-shadow:.6;--lg-blur:0px}
+.tgk.lifted{-webkit-backdrop-filter:url(#tgLens) blur(var(--lg-blur,0px)) saturate(1.3);backdrop-filter:url(#tgLens) blur(var(--lg-blur,0px)) saturate(1.3)}
+.segthumb{--lg-rim:.6;--lg-shadow:.9}      /* the look of the language switch's lifted thumb (seg-thumb.js: look [0.9, 0.6, 1]) */
+.segthumb.lifted{-webkit-backdrop-filter:url(#sgLens) blur(var(--lg-blur,0px)) saturate(1.3);backdrop-filter:url(#sgLens) blur(var(--lg-blur,0px)) saturate(1.3)}
+.tgk.lifted,.segthumb.lifted{
+  background-image:linear-gradient(rgba(255,255,255,calc(var(--lg-rim,.4)*.5)),rgba(255,255,255,0) 42%,rgba(0,0,0,.1));   /* light from above: it reads as a drop on any track */
+  box-shadow:inset 0 1.5px 1px rgba(255,255,255,calc(var(--lg-rim,.4)*2)),inset 0 -1.5px 2px rgba(0,0,0,.14),inset 0 0 0 .5px rgba(120,120,120,.45),0 5px 14px rgba(0,0,0,calc(var(--lg-shadow,.4)*.9))}
+
+/* ---- sliders with a liquid-glass knob (js/glass-slider.js): the input lies invisible on top and does the work; the
+   track, its fill and the knob under it are drawn from its value ---- */
+.gs{position:relative;display:block;height:24px;min-width:0}
+.gs input[type=range]{position:absolute;inset:0;width:100%;height:100%;margin:0;opacity:0;cursor:pointer}
+.gs input[type=range]::-webkit-slider-runnable-track{height:24px;background:none}
+.gs input[type=range]::-webkit-slider-thumb{width:26px;height:24px;margin-top:0}      /* as wide as the knob: same travel */
+.gs input[type=range]::-moz-range-thumb{width:26px;height:24px}
+.gst{position:absolute;left:0;right:0;top:50%;height:6px;margin-top:-3px;border-radius:999px;overflow:hidden;pointer-events:none;
+  background:rgba(255,255,255,.16);box-shadow:inset 0 1px 1.5px rgba(0,0,0,.28)}
+.gsf{position:absolute;inset:0;background:var(--fg);transform-origin:0 50%;transform:scaleX(0);will-change:transform}
+.gsk{box-shadow:0 1px 4px rgba(0,0,0,.4),0 0 0 .5px rgba(0,0,0,.1)}
+.gsk.lifted{-webkit-backdrop-filter:url(#gsLens) blur(var(--lg-blur,0px)) saturate(1.3);backdrop-filter:url(#gsLens) blur(var(--lg-blur,0px)) saturate(1.3)}
+.gs:has(input:focus-visible) .gsk{outline:2px solid var(--fg);outline-offset:2px}
+.fxrow output{transition:color .25s}
+.fxrow:has(.gs input:active) output{color:#fff}
+
+/* ---- the settings card as layers of glass (液态玻璃 interface): each section a lighter sheet with a lit upper edge,
+   buttons that give under the finger, and the sections coming up one after another when the card slides in ---- */
+body.ui-glass .modal.drawer .fxsec{border-radius:20px;box-shadow:inset 0 1px 0 rgba(255,255,255,.14),inset 0 0 0 .5px rgba(255,255,255,.06)}
+body.ui-glass .modal.drawer .seg{border-color:transparent;background:rgba(0,0,0,.2);box-shadow:inset 0 1px 2px rgba(0,0,0,.3),0 .5px 0 rgba(255,255,255,.08)}
+body.ui-glass .modal.drawer .btn{border-color:transparent;background:rgba(255,255,255,.12);box-shadow:inset 0 1px 0 rgba(255,255,255,.2),inset 0 0 0 .5px rgba(255,255,255,.08),0 2px 8px rgba(0,0,0,.18);
+  transition:transform .4s cubic-bezier(.2,1.7,.4,1),background .2s}
+body.ui-glass .modal.drawer .btn:hover{background:rgba(255,255,255,.2)}
+body.ui-glass .modal.drawer .btn:active{transform:scale(.93);transition-duration:.12s}
+body.ui-glass .modal.drawer .btn.btn-solid{background:rgba(255,255,255,.92);color:#000}
+body.ui-glass .modal.drawer .btn.btn-solid:hover{background:#fff;opacity:1}
+.modal.drawer .sw{transition:transform .4s cubic-bezier(.2,1.7,.4,1),border-color .2s}
+.modal.drawer .sw:active{transform:scale(.82);transition-duration:.1s}
+.modal.drawer .sw[aria-pressed="true"]{transform:scale(1.12)}
+.modal.drawer:not(.prewarm):not(.closing) .fxsec{animation:fxSecIn .55s cubic-bezier(.2,.9,.3,1) both}
+.modal.drawer .fxsec:nth-of-type(2){animation-delay:.05s}
+.modal.drawer .fxsec:nth-of-type(3){animation-delay:.1s}
+.modal.drawer .fxsec:nth-of-type(4){animation-delay:.15s}
+.modal.drawer .fxsec:nth-of-type(n+5){animation-delay:.2s}
+@keyframes fxSecIn{from{opacity:0;transform:translateY(18px) scale(.97)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion:reduce){.modal.drawer .fxsec{animation:none!important}}
+
+/* ---- scroll bars, the same everywhere: no track, no arrow buttons, a thin rounded bar that floats inside the
+   rounded corner of its panel and gets brighter under the mouse ---- */
+::-webkit-scrollbar{width:12px;height:12px}
+::-webkit-scrollbar-track{background:transparent;margin:10px}
+::-webkit-scrollbar-thumb{min-height:36px;border:4px solid transparent;border-radius:999px;background:rgba(255,255,255,.24);background-clip:content-box}
+::-webkit-scrollbar-thumb:hover{border-width:3px;background-color:rgba(255,255,255,.42)}
+::-webkit-scrollbar-thumb:active{border-width:3px;background-color:rgba(255,255,255,.6)}
+::-webkit-scrollbar-button{display:none;width:0;height:0}
+::-webkit-scrollbar-corner{background:transparent}
+@supports not selector(::-webkit-scrollbar){*{scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.3) transparent}}   /* Firefox */
+
+/* ---- drop-downs (js/dropdown.js): the <select> is kept, unseen; a button shows the chosen option and opens one
+   list for all of them, frosted like the menus ---- */
+.dd-native{position:absolute!important;width:1px!important;height:1px!important;padding:0!important;border:0!important;opacity:0;pointer-events:none;overflow:hidden}
+.dd{all:unset;box-sizing:border-box;cursor:pointer;display:inline-flex;align-items:center;justify-content:space-between;gap:8px;min-height:30px;max-width:100%;
+  padding:5px 9px 5px 12px;border-radius:10px;font-size:13px;color:var(--fg);background:rgba(255,255,255,.09);transition:background .15s}
+.dd[hidden]{display:none}
+.dd:hover,.dd[aria-expanded="true"]{background:rgba(255,255,255,.16)}
+.dd:focus-visible{outline:2px solid var(--fg);outline-offset:1px}
+.dd:disabled{opacity:.4;cursor:default}
+.ddv{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ddc{flex:none;width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;opacity:.7;transition:transform .2s var(--ease)}
+.dd[aria-expanded="true"] .ddc{transform:rotate(180deg)}
+.field .dd{width:100%;min-height:38px;padding:8px 10px 8px 12px;font-size:14px;letter-spacing:0}
+.fxrow .dd{justify-self:start}
+.ddpop{position:fixed;z-index:3000;box-sizing:border-box;overflow:auto;padding:5px;border-radius:14px;border:1px solid var(--hair);background:rgba(24,24,26,.97);
+  box-shadow:0 16px 44px rgba(0,0,0,.45);font-size:13px;color:var(--fg);-webkit-app-region:no-drag;app-region:no-drag;animation:ddIn .2s var(--ease) both}
+body.ui-glass .ddpop{background:rgba(34,34,38,.62);-webkit-backdrop-filter:blur(28px) saturate(1.7);backdrop-filter:blur(28px) saturate(1.7);border-color:transparent;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.22),inset 0 0 0 .5px rgba(255,255,255,.1),0 16px 44px rgba(0,0,0,.35)}
+.ddpop.closing{animation:ddOut .14s ease-in both;pointer-events:none}
+@keyframes ddIn{from{opacity:0;transform:scale(.9)}to{opacity:1;transform:none}}
+@keyframes ddOut{to{opacity:0;transform:scale(.95)}}
+.ddo{display:flex;align-items:center;gap:8px;min-height:30px;padding:5px 14px 5px 8px;border-radius:9px;white-space:nowrap;cursor:pointer}
+.ddo.active{background:rgba(255,255,255,.14)}
+.ddo[aria-disabled="true"]{opacity:.4;cursor:default}
+.ddt{flex:none;width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;visibility:hidden}
+.ddo[aria-selected="true"] .ddt{visibility:visible}
+.ddo[aria-selected="true"]{font-weight:700}
+
+/* ---- the bottom bar and its menu (js/menu.js) ----
+   One bar holds play, progress, time and "more"; every other action is a row of the menu that opens from "more".
+   Liquid glass: the bar is a single piece of glass (drawn by glass.js) and the things on it are plain fills and
+   signs, never glass on glass. The menu carries a lot of text over moving lyrics, so it is frosted. */
+.bottom{position:relative;gap:8px}
+.tbar{flex-wrap:nowrap;gap:12px;padding:6px 8px 6px 6px;border:1px solid var(--hair);border-radius:999px;background:rgba(18,18,18,.55)}
+.tbar .play{width:38px;height:38px}
+.tbar .play svg{width:17px;height:17px}
+.tbar .bar{min-width:60px}
+.skip{all:unset;cursor:pointer;flex:none;width:32px;height:32px;border-radius:50%;display:grid;place-items:center;color:var(--fg);opacity:.85;transition:background .2s,opacity .2s}
+.skip[hidden]{display:none}
+.skip svg{width:17px;height:17px;fill:currentColor}
+.skip:hover{background:var(--faint);opacity:1}
+.skip:active{transform:scale(.92)}
+.skip:focus-visible{outline:2px solid var(--fg);outline-offset:2px}
+.tbar:has(.skip:not([hidden])){gap:6px;padding-left:8px}
+.tbar:has(.skip:not([hidden])) .bar{margin-left:8px}
+.tbar:has(.skip:not([hidden])) .time{margin:0 6px}
+.more{all:unset;cursor:pointer;flex:none;width:34px;height:34px;border-radius:50%;display:grid;place-items:center;color:var(--fg);transition:background .2s}
+.more svg{width:18px;height:18px;fill:currentColor}
+.more:hover,.more[aria-expanded="true"]{background:var(--faint)}
+.more:focus-visible{outline:2px solid var(--fg);outline-offset:2px}
+body.ui-glass .tbar.lg:hover{background:transparent}
+body.ui-glass .tbar.lg .play{background:rgba(255,255,255,.9);color:#000}
+.status{display:block;padding:0 14px;min-height:1.4em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:opacity .8s var(--ease)}
+.status.quiet{opacity:0}
+.menu{position:absolute;right:0;bottom:calc(100% + 10px);z-index:8;width:min(290px,calc(100vw - 24px));max-height:calc(100vh - 110px);overflow:auto;box-sizing:border-box;
+  padding:6px;border-radius:18px;border:1px solid var(--hair);background:rgba(22,22,24,.96);box-shadow:0 18px 50px rgba(0,0,0,.45);
+  transform-origin:calc(100% - 25px) calc(100% + 32px);will-change:transform,opacity;animation:menuIn .42s cubic-bezier(.22,1.18,.36,1) both}
+/* grows out of the "more" button with a little spring, the rows following a beat later; shrinks back into it */
+@keyframes menuIn{from{opacity:0;transform:scale(.35)}45%{opacity:1}to{opacity:1;transform:none}}
+@keyframes menuOut{from{opacity:1;transform:none}to{opacity:0;transform:scale(.6)}}
+@keyframes menuRow{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.menu.closing{animation:menuOut .17s cubic-bezier(.4,0,1,1) both;pointer-events:none}
+.menu:not(.closing) .mgroup{animation:menuRow .36s var(--ease) both}
+.menu .mgroup:nth-child(1){animation-delay:.1s}
+.menu .mgroup:nth-child(2){animation-delay:.07s}
+.menu .mgroup:nth-child(3){animation-delay:.04s}
+.menu .mgroup:nth-child(4){animation-delay:.02s}
+@media (prefers-reduced-motion:reduce){.menu,.menu.closing,.menu .mgroup{animation-duration:.01s;animation-delay:0s}}
+body.ui-glass .menu{background:rgba(30,30,32,.5);-webkit-backdrop-filter:blur(28px) saturate(1.7);backdrop-filter:blur(28px) saturate(1.7);border-color:transparent;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.22),inset 0 0 0 .5px rgba(255,255,255,.1),0 18px 50px rgba(0,0,0,.35)}
+.mgroup+.mgroup{margin-top:5px;padding-top:5px;border-top:1px solid var(--hair)}
+.mgroup:not(:has(> .mi:not([hidden]))){display:none}
+.mhead{padding:5px 10px 3px;font-size:11px;letter-spacing:.06em;color:var(--dim)}
+.mi{all:unset;box-sizing:border-box;display:flex;align-items:center;gap:10px;width:100%;min-height:34px;padding:6px 10px;border-radius:11px;font-size:13px;color:var(--fg);cursor:pointer;transition:background .15s}
+.mi[hidden]{display:none}
+.mi:hover{background:rgba(255,255,255,.1)}
+.mi:active{background:rgba(255,255,255,.16)}
+.mi:focus-visible{outline:2px solid var(--fg);outline-offset:-2px}
+.mi:disabled,.mi.off{opacity:.38;pointer-events:none}
+.mic{flex:none;width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;opacity:.85}
+.mgrow{flex:1;min-width:0}
+.mrow,.msub{cursor:default}
+.mrow:hover,.msub:hover{background:none}
+.msub{color:var(--dim)}
+.msub:has(select[hidden]){display:none}
+.msub .follow-sel{border-color:transparent;background:rgba(255,255,255,.08);padding:5px 8px;max-width:150px}
+.msw{background:rgba(255,255,255,.2)}      /* the track of a menu switch: size, knob and colours come from .tg (js/glass-toggle.js) */
+.menu .nudge{border:0;padding:0;background:rgba(255,255,255,.08)}
+.menu .nudge:has(.nval.on){box-shadow:inset 0 0 0 1px var(--fg)}
+.menu:has(#followBtn[aria-pressed="true"]) #audioLab{opacity:.38;pointer-events:none}
+
+/* ---- desktop version only (desktop/app.py; body.desktop is set by js/desktop.js): no title bar, the page fills the
+   window. The top 24px drag the window (app-region). The window's own buttons are three small dots in the corner
+   (minimise, maximise, close): quiet until the mouse comes near, then they light up and show their signs.
+   Regions marked "drag" take the mouse whatever lies above them, so anything clickable that can reach the top is
+   marked "no-drag". ---- */
+.deskbar{display:none}
+body.desktop .deskbar{display:flex;justify-content:flex-end;align-items:center;position:fixed;left:0;right:0;top:0;height:24px;z-index:2000;-webkit-app-region:drag;app-region:drag}
+.dk{display:flex;height:24px;padding:0 7px 0 6px;-webkit-app-region:no-drag;app-region:no-drag}
+.dk button{all:unset;width:20px;height:24px;display:grid;place-items:center}
+.dk i{width:12px;height:12px;border-radius:50%;display:grid;place-items:center;background:rgba(255,255,255,.26);box-shadow:0 0 0 .5px rgba(0,0,0,.3);transition:background .18s,transform .18s var(--ease)}
+.dk svg{width:8px;height:8px;fill:none;stroke:rgba(0,0,0,.72);stroke-width:1.3;stroke-linecap:round;opacity:0;transition:opacity .18s}
+.dk:hover i{background:rgba(255,255,255,.82)}
+.dk:hover svg{opacity:1}
+.dk button:hover i{background:#fff;transform:scale(1.18)}
+.dk #dkX:hover i{background:#ff5f57}
+.dk button:active i{transform:scale(.94)}
+.dk button:focus-visible i{outline:2px solid #fff;outline-offset:2px}
+body.deskfull .deskbar{-webkit-app-region:no-drag;app-region:no-drag;pointer-events:none}   /* full screen: nothing to drag */
+body.deskfull .dk{pointer-events:auto}
+body.deskfull .dk #dkMin,body.deskfull .dk #dkMax{display:none}
+body.desktop .modal .panel{-webkit-app-region:no-drag;app-region:no-drag}
+body.desktop .modal.drawer{top:30px}
+
+/* typing fields styled with "all:unset" lose it again: text typed into a field can always be selected */
+input.nval,input.libq,input[type=search],input[type=text],textarea{-webkit-user-select:text;user-select:text}
+
+/* the three rows of the page (header, lyrics, controls) may shrink with the window or beside the settings card, however
+   long a single line in them is (the status line does not wrap) */
+.app>*{min-width:0}
+/* a long song title is cut with "..." instead of pushing the language switch onto a line of its own */
+@media (min-width:761px){.top{flex-wrap:nowrap}.meta{flex:1 1 0}.meta span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.ctrls{flex:none;flex-wrap:nowrap}}
+
+/* ---- text fields, tick boxes and round choices, one look (the browser's own are replaced) ----
+   Fields: a soft translucent fill instead of a black box with a hard outline, a magnifier in search fields, a quiet
+   ring when typing. Ticks and choices: the same green as the switches when on, a faint outline when off. */
+.libq{box-sizing:border-box;height:44px;padding:0 14px 0 42px;border:0;border-radius:14px;color:var(--fg);caret-color:#30d158;
+  background:rgba(255,255,255,.08) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-opacity='.55' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='10.5' cy='10.5' r='6.5'/%3E%3Cpath d='M15.5 15.5L20 20'/%3E%3C/svg%3E") 14px 50%/18px no-repeat;
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.1);transition:background-color .2s,box-shadow .2s;-webkit-appearance:none;appearance:none}
+.libq::placeholder{color:rgba(255,255,255,.38)}
+.libq:hover{background-color:rgba(255,255,255,.11)}
+.libq:focus,.libq:focus-visible{outline:none;background-color:rgba(255,255,255,.13);box-shadow:inset 0 0 0 1.5px rgba(255,255,255,.55),0 0 0 4px rgba(255,255,255,.08)}
+.libq::-webkit-search-cancel-button{-webkit-appearance:none;appearance:none;width:20px;height:20px;margin:0 0 0 8px;border-radius:50%;cursor:pointer;
+  background:rgba(255,255,255,.2) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='%23ffffff' stroke-width='1.8' stroke-linecap='round'%3E%3Cpath d='M6.5 6.5l7 7M13.5 6.5l-7 7'/%3E%3C/svg%3E") 50%/20px no-repeat}
+.libq::-webkit-search-cancel-button:hover{background-color:rgba(255,255,255,.34)}
+body.ui-glass .libq{background-color:rgba(255,255,255,.1)}
+
+.check input[type=checkbox],.check input[type=radio]{-webkit-appearance:none;appearance:none;flex:none;width:18px;height:18px;margin:0;cursor:pointer;
+  background:rgba(255,255,255,.07) 50%/100% no-repeat;box-shadow:inset 0 0 0 1.5px rgba(255,255,255,.34);
+  transition:background-color .18s,box-shadow .18s,transform .18s var(--ease)}
+.check input[type=checkbox]{border-radius:6px}
+.check input[type=radio]{border-radius:50%}
+.check input:hover{box-shadow:inset 0 0 0 1.5px rgba(255,255,255,.6)}
+.check input:active{transform:scale(.88)}
+.check input:checked{background-color:#30d158;box-shadow:inset 0 0 0 1.5px #30d158}
+.check input[type=checkbox]:checked{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 18 18' fill='none' stroke='%23ffffff' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4.6 9.4l3 3 5.8-6.6'/%3E%3C/svg%3E")}
+.check input[type=radio]:checked{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 18 18'%3E%3Ccircle cx='9' cy='9' r='3.4' fill='%23ffffff'/%3E%3C/svg%3E")}
+.check input:focus-visible{outline:2px solid var(--fg);outline-offset:2px}
+.check input:disabled{opacity:.35;cursor:default}
+.check:has(input:disabled){color:var(--dim);cursor:default}
+
+/* ---- portrait windows (taller than wide; the same test as coverLayout in frame.js) ----
+   The cover panel moves to the top left with the title beside it, exactly where the header's own small title is:
+   that one is hidden, the panel's says the same. */
+@media (max-aspect-ratio:1049/1000){
+  body.cover-on .meta{display:none}
+  body.cover-on .top{justify-content:flex-end}      /* the language switch stays at the top right, above the panel's title */
+}
+/* narrow windows (portrait): the settings card comes up from the bottom instead of the side, floating with the same
+   gap and corners; the play bar and the lyrics stay above it. (Written last: the desktop rule that keeps the side card
+   below the window buttons must not pin this one to the top.) */
+@media (max-width:760px){
+  .modal.drawer,body.desktop .modal.drawer{inset:auto 12px 12px 12px;top:auto;width:auto;height:var(--sheet)}
+  .modal.drawer .panel{border-width:1px;border-radius:26px;transform-origin:50% 100%}
+  .app{transition:padding-right .5s var(--ease),padding-bottom .5s var(--ease)}
+  body.fx-open .app{padding-bottom:calc(var(--sheet) + 20px)}
+}
+
+/* ---- 字体 section of the settings card ---- */
+.fxsec .fxgrp{margin:6px 0 0;color:var(--fg)}
+#fxFontSec .fxhead .btn{white-space:nowrap}
+
+/* the header's English / 中文 / 双语 switch can be turned off in the settings; it is in the card then */
+body.no-lang-switch #modeSeg{display:none}

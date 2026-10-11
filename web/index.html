@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Lumilyric</title>
+<link rel="stylesheet" href="fonts/fonts-latin.css">
+<link rel="stylesheet" href="fonts/fonts-cjk.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<canvas id="bgFlow" class="bgflow" aria-hidden="true"></canvas>
+<div class="bggrain" id="bgGrain" aria-hidden="true"></div>
+<canvas id="glView" class="glview" aria-hidden="true"></canvas>
+<div id="coverPanel" class="covpanel" hidden><div class="covart" id="covArt"></div><div class="covti" id="covTi"></div><div class="covar" id="covAr"></div></div>
+<div class="fps" id="fps" hidden aria-hidden="true"></div>
+<!-- desktop version only (desktop/app.py): the window has no title bar; this strip drags it and holds its buttons -->
+<div class="deskbar" id="deskBar">
+  <span class="dk">
+    <button id="dkFull" aria-label="全屏" title="全屏（F11，Esc 退出）"><i><svg viewBox="0 0 8 8"><path d="M4.6 1.6h1.8v1.8M3.4 6.4H1.6V4.6"/></svg></i></button>
+    <button id="dkMin" aria-label="最小化" title="最小化"><i><svg viewBox="0 0 8 8"><path d="M1.5 4h5"/></svg></i></button>
+    <button id="dkMax" aria-label="最大化" title="最大化 / 还原"><i><svg viewBox="0 0 8 8"><rect x="1.6" y="1.6" width="4.8" height="4.8" rx=".6"/></svg></i></button>
+    <button id="dkX" aria-label="关闭" title="关闭"><i><svg viewBox="0 0 8 8"><path d="M2 2l4 4M6 2l-4 4"/></svg></i></button>
+  </span>
+</div>
+<div class="app">
+  <header class="top">
+    <div class="meta"><b id="songTitle">示例 · Night Drive</b><span id="songArtist">载入你的 .lrc 文件开始</span></div>
+    <div class="ctrls">
+    <div class="seg" id="srcSeg" role="group" aria-label="歌词来源" hidden>
+      <button data-src="lrc" aria-pressed="true" title="文字用 LRC，时间用 Whisper 对齐">LRC 歌词</button>
+      <button data-src="whisper" aria-pressed="false" title="不用 LRC，直接播放 Whisper 识别出来的文字">仅 Whisper</button>
+    </div>
+    <div class="seg" id="modeSeg" data-thumb role="group" aria-label="歌词语言">
+      <button id="m-en" data-mode="en" aria-pressed="false">English</button>
+      <button id="m-zh" data-mode="zh" aria-pressed="false">中文</button>
+      <button id="m-both" data-mode="both" aria-pressed="true">双语</button>
+    </div>
+    </div>
+  </header>
+
+  <main class="stage" id="stage" aria-live="polite">
+    <div class="drop">松开即可载入歌词或音频</div>
+  </main>
+
+  <footer class="bottom">
+    <!-- one bar: play, progress, time and "more". Everything else lives in the menu that opens from "more" (js/menu.js) -->
+    <div class="row tbar" id="tbar">
+      <button class="skip" id="prevBtn" hidden aria-label="上一首" title="上一首"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5h2.4v14H6zM19 5.5v13L9.5 12z"/></svg></button>
+      <button class="play" id="play" aria-label="播放"><svg viewBox="0 0 24 24" id="icon"><path d="M7 4.5v15l13-7.5z"/></svg></button>
+      <button class="skip" id="nextBtn" hidden aria-label="下一首" title="下一首"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.6 5H18v14h-2.4zM5 5.5v13l9.5-6.5z"/></svg></button>
+      <div class="bar"><input type="range" id="seek" min="0" max="1000" value="0" aria-label="播放进度"></div>
+      <span class="time" id="time">0:00 / 0:00</span>
+      <button class="more" id="moreBtn" aria-label="更多" title="歌词、跟随播放器、效果设置、导出" aria-haspopup="true" aria-expanded="false" aria-controls="moreMenu"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg></button>
+    </div>
+    <span class="status" id="status">示例歌词 · 无音频时按时间轴播放 <span class="hint-keys">· <kbd>空格</kbd> 播放 <kbd>←</kbd><kbd>→</kbd> 快退快进 <kbd>[</kbd><kbd>]</kbd> 歌词提前/推迟</span></span>
+    <div class="menu" id="moreMenu" hidden>
+      <div class="mgroup" role="group" aria-label="歌词">
+        <div class="mhead">歌词</div>
+        <label class="mi" for="lrcFile" data-close title="支持 .lrc 和逐词的 .ttml"><svg class="mic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4M9 12h6M9 16h6"/></svg>载入歌词 .lrc</label>
+        <button class="mi" id="libBtn" data-close title="在社区逐词歌词库（AMLL TTML DB）里搜歌"><svg class="mic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6"/><path d="M15 15l5 5"/></svg>歌词库</button>
+        <input type="file" id="lrcFile" accept=".lrc,.txt,.ttml,.xml,text/plain">
+        <button class="mi" id="autoBtn" data-close hidden><svg class="mic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19L15 9M14 4v3M20 10h-3M18.5 5.5l-1.5 1.5"/></svg>自动识别</button>
+        <button class="mi" id="wordLrcBtn" data-close hidden><svg class="mic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M7 11l5 5 5-5M5 20h14"/></svg>导出逐词 LRC</button>
+      </div>
+      <div class="mgroup" role="group" aria-label="声音来源">
+        <div class="mhead">声音来源</div>
+        <button class="mi" id="followBtn" hidden aria-pressed="false" title="自动识别电脑上 QQ 音乐 / 网易云 / 酷狗正在播放的歌，下载歌词并跟着播放器的进度走"><svg class="mic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="2"/><path d="M7.8 16.2a6 6 0 010-8.4M16.2 7.8a6 6 0 010 8.4M4.9 19.1a10 10 0 010-14.2M19.1 4.9a10 10 0 010 14.2"/></svg><span class="mgrow">跟随播放器</span><i class="msw" aria-hidden="true"></i></button>
+        <label class="mi msub"><span class="mic"></span><span class="mgrow">播放器</span><select class="follow-sel" id="followApp" hidden aria-label="跟随哪个播放器"></select></label>
+        <label class="mi" id="audioLab" for="audioFile" data-close><svg class="mic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18V6l10-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/></svg>载入音频文件</label>
+        <input type="file" id="audioFile" accept="audio/*">
+      </div>
+      <div class="mgroup" role="group" aria-label="歌词时间">
+        <div class="mi mrow"><svg class="mic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg><span class="mgrow">歌词偏移</span>
+          <div class="nudge" role="group" aria-label="歌词时间偏移">
+            <button class="nbtn" id="nudgeMinus" title="歌词提前 0.05 秒（快捷键 [ ，按住 Shift 为 0.01 秒）" aria-label="歌词提前">−</button>
+            <input class="nval" id="nudgeVal" inputmode="decimal" autocomplete="off" spellcheck="false" value="0.00"
+              title="直接输入秒数后回车：正数 = 歌词推迟，负数 = 歌词提前。也可以写成 分:秒，比如 -1:05.5" aria-label="歌词偏移（秒）">
+            <span class="nunit">s</span>
+            <button class="nbtn nzero" id="nudgeZero" title="偏移归零" aria-label="偏移归零" hidden>×</button>
+            <button class="nbtn" id="nudgePlus" title="歌词推迟 0.05 秒（快捷键 ] ，按住 Shift 为 0.01 秒）" aria-label="歌词推迟">+</button>
+          </div>
+        </div>
+      </div>
+      <div class="mgroup" role="group" aria-label="效果和导出">
+        <button class="mi" id="fxBtn" data-close><svg class="mic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h9M19 7h1M4 17h3M13 17h7"/><circle cx="16" cy="7" r="2.5"/><circle cx="10" cy="17" r="2.5"/></svg>效果设置</button>
+        <button class="mi" id="exportBtn" data-close><svg class="mic" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="14" rx="2.5"/><path d="M10 9.5v5l4.5-2.5z"/></svg>导出视频</button>
+      </div>
+    </div>
+  </footer>
+</div>
+
+<div class="modal" id="coverModal" hidden>
+  <div class="panel" role="dialog" aria-modal="true" aria-labelledby="coverTitle">
+    <div class="ph"><h2 id="coverTitle">搜封面</h2><span class="xinfo">QQ音乐 · 网易云 · 酷狗 · Apple Music</span></div>
+    <input type="search" id="coverQ" class="libq" placeholder="输入歌名或专辑名和歌手，回车搜索" aria-label="搜索封面" autocomplete="off">
+    <p class="xmsg" id="coverMsg" aria-live="polite"></p>
+    <div class="covergrid" id="coverRes"></div>
+    <div class="actions"><button class="btn" id="coverClose">关闭</button></div>
+  </div>
+</div>
+
+<div class="modal" id="coverAsk" hidden>
+  <div class="panel askpanel" role="dialog" aria-modal="true" aria-labelledby="coverAskTitle">
+    <div class="askrow"><img id="coverAskImg" alt="">
+      <div><h2 id="coverAskTitle">找到了封面</h2><p class="note" id="coverAskMsg"></p></div></div>
+    <div class="actions"><button class="btn" id="coverAskNo">不用了</button><button class="btn btn-solid" id="coverAskYes">选择封面</button></div>
+  </div>
+</div>
+
+<div class="modal" id="libModal" hidden>
+  <div class="panel" role="dialog" aria-modal="true" aria-labelledby="libTitle">
+    <div class="ph"><h2 id="libTitle">歌词库</h2>
+      <div class="seg" role="group" aria-label="歌词来源" id="libSrc">
+        <button data-src="lddc" title="通过 LDDC 搜 QQ音乐、酷狗、网易云（需要本地程序）">QQ音乐 / 酷狗 / 网易云</button>
+        <button data-src="amll" title="AMLL TTML DB：社区手工制作的逐词歌词">社区逐词库</button>
+      </div></div>
+    <input type="search" id="libQ" class="libq" placeholder="输入歌名和歌手，比如：橙子汽水 ChiliChill" aria-label="搜索歌名或歌手" autocomplete="off">
+    <p class="xmsg" id="libMsg" aria-live="polite"></p>
+    <div class="libres" id="libRes" role="list"></div>
+    <p class="note" id="libNote"></p>
+    <div class="actions"><button class="btn" id="libClose">关闭</button></div>
+  </div>
+</div>
+
+<div class="modal" id="autoModal" hidden>
+  <div class="panel" role="dialog" aria-modal="true" aria-labelledby="autoTitle">
+    <div class="ph"><h2 id="autoTitle">自动识别</h2><span class="xinfo" id="autoEnv"></span></div>
+    <div class="fxsec">
+      <div class="fxrow"><label>音频</label><span class="tn" id="autoAudio" style="min-width:0;overflow-wrap:anywhere"></span>
+        <label class="btn" for="audioFile" style="justify-self:end">选择</label></div>
+    </div>
+    <div class="fxsec">
+      <label class="check"><input type="radio" name="autoMode" id="autoModeAlign" value="align"> 用已载入的歌词（LRC）逐字对齐</label>
+      <p class="note" id="autoAlignNote" style="margin:0 0 0 24px"></p>
+      <label class="check"><input type="radio" name="autoMode" id="autoModeRec" value="rec"> 没有歌词：直接识别生成</label>
+      <p class="note" id="autoRecNote" style="margin:0 0 0 24px" hidden></p>
+      <div class="fxrow" style="margin-left:24px"><label for="autoLang">语言</label>
+        <select id="autoLang" class="field-sel">
+          <option value="auto">自动判断</option><option value="zh">中文</option><option value="en">英文</option>
+          <option value="ja">日语</option><option value="ko">韩语</option><option value="yue">粤语</option>
+        </select><span></span></div>
+      <label class="check" style="margin-left:24px"><input type="checkbox" id="autoRefine" checked> 识别后再逐字/逐词对齐，让每个字的时间更准</label>
+    </div>
+    <div class="track"><div class="fill" id="autoBar"></div></div>
+    <p class="xmsg" id="autoMsg" aria-live="polite"></p>
+    <div class="actions">
+      <button class="btn" id="autoClose">关闭</button>
+      <button class="btn btn-solid" id="autoGo">开始</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal drawer" id="fxModal" hidden>
+  <div class="panel" role="dialog" aria-modal="false" aria-labelledby="fxTitle">
+    <div class="ph"><h2 id="fxTitle">效果设置</h2><button class="drawer-x" id="fxX" aria-label="关闭效果设置">×</button></div>
+    <p class="fxtip">改动会直接显示在旁边的歌词上，导出视频也用这些设置。空格键播放/暂停，<button id="fxReplay">重播这一句</button>看动画效果。</p>
+    <section class="fxsec" id="fxRenderSec">
+      <div class="fxhead"><h3>渲染</h3>
+        <div class="seg" role="group" aria-label="渲染方式" id="fxRender">
+          <button data-r="dom" title="歌词是网页文字，辉光用文字阴影；不需要显卡">网页</button>
+          <button data-r="webgl" title="和导出视频同一套画布绘制，辉光由显卡做真正的泛光；网页上看到的就是导出的样子">WebGL</button>
+        </div></div>
+      <p class="fxtip" id="fxRenderNote"></p>
+      <div class="fxrow"><label>界面</label>
+        <div class="seg" role="group" aria-label="界面风格" id="fxUi">
+          <button data-ui="flat" title="普通的深色按钮和面板">普通</button>
+          <button data-ui="glass" title="类似苹果液态玻璃：按钮像一块透明的厚玻璃，边缘会折射后面的画面和歌词（用显卡实时绘制）">液态玻璃</button>
+        </div><span></span></div>
+      <div class="fxhead"><span style="font-size:13px;color:var(--dim)">性能显示（快捷键 F）</span>
+        <label class="switch" title="显示帧数、最慢一帧、渲染方式、渲染分辨率和显卡"><input type="checkbox" id="fxFps" aria-label="性能显示"><span></span></label></div>
+      <div class="fxrow" id="fxPerfPosRow"><label>位置</label>
+        <div class="seg" role="group" aria-label="性能显示位置" id="fxPerfPos">
+          <button data-p="tl" title="左上">左上</button><button data-p="tc" title="顶部居中">上中</button><button data-p="tr" title="右上">右上</button>
+          <button data-p="bl" title="左下">左下</button><button data-p="bc" title="底部居中">下中</button><button data-p="br" title="右下">右下</button>
+        </div></div>
+      <div class="fxrow" id="fxPerfSizeRow"><label for="fxPerfSize">大小</label><input type="range" id="fxPerfSize" min="70" max="200" step="5"><output id="fxPerfSizeV"></output></div>
+    </section>
+    <section class="fxsec" id="fxAnimSec">
+      <div class="fxhead"><h3>动画</h3></div>
+      <div class="fxhead"><span style="font-size:13px;color:var(--dim)">右上角显示语言切换</span>
+        <label class="switch" title="关闭后，右上角的 English / 中文 / 双语 切换按钮会隐藏，改在下面一行切换"><input type="checkbox" id="fxLangShow" aria-label="右上角显示语言切换"><span></span></label></div>
+      <div class="fxrow" id="fxLangRow" hidden><label>语言</label>
+        <div class="seg" id="fxLangSeg" role="group" aria-label="歌词语言">
+          <button data-mode="en" aria-pressed="false">English</button>
+          <button data-mode="zh" aria-pressed="false">中文</button>
+          <button data-mode="both" aria-pressed="true">双语</button>
+        </div><span></span></div>
+      <div class="fxrow"><label>布局</label>
+        <div class="seg" role="group" aria-label="歌词布局" id="fxLayout">
+          <button data-l="single" title="一次只显示一句，用下面的入场 / 离场动画">单句</button>
+          <button data-l="scroll" title="所有歌词排成一列，当前句高亮，换句时整列平滑滚动（类似 Apple Music）">滚动歌词</button>
+          <button data-l="word" title="一次只显示一个词：英文一个单词，中文按词语自动拆分">逐词</button>
+        </div><span></span></div>
+      <div class="fxrow" id="fxWordAnimRow"><label>动画</label>
+        <div class="seg wrap" role="group" aria-label="逐词动画" id="fxWordAnim"></div><span></span></div>
+      <div class="fxrow" id="fxAlignRow"><label>对齐</label>
+        <div class="seg" role="group" aria-label="滚动歌词对齐" id="fxAlign">
+          <button data-al="left" title="每一行都从同一条左边线开始">靠左</button>
+          <button data-al="center" title="每一行都以中轴线为中心，左右对称">居中</button>
+        </div><span></span></div>
+      <div class="fxrow" id="fxDragRow" title="换句时下面的歌词跟上来的延迟：0 = 整列一起移动，越大越像被拖着、一行接一行地跟上"><label for="fxDrag">拖拽感</label><input type="range" id="fxDrag" min="0" max="300" step="10"><output id="fxDragV"></output></div>
+      <div class="fxrow" id="fxBlurRow" title="当前句以外的歌词有多模糊：0 = 所有歌词都清晰，100% 是原来的效果，越大离当前句越远的歌词越朦胧"><label for="fxBlur">模糊</label><input type="range" id="fxBlur" min="0" max="300" step="10"><output id="fxBlurV"></output></div>
+      <div class="fxhead"><span style="font-size:13px;color:var(--dim)">长句拆成单行（单句布局用）</span>
+        <label class="switch" title="太长的句子拆成几段依次播放，始终只显示一行；关闭后长句自动换行显示"><input type="checkbox" id="oneLine" aria-label="长句拆成单行"><span></span></label></div>
+      <div class="fxhead"><span style="font-size:13px;color:var(--dim)">显示封面（左边封面 + 歌名，右边歌词）</span>
+        <label class="switch" title="像 Apple Music 一样在左边显示专辑封面、歌名和歌手"><input type="checkbox" id="fxCover" aria-label="显示封面"><span></span></label></div>
+      <p class="fxtip" id="fxLayoutNote" hidden>滚动歌词有自己的滚动动画；当前句会按逐字时间点亮（没有逐字时间就整句点亮）。</p>
+      <div class="fxrow" id="fxAnimRow"><label>入场</label>
+        <div class="seg" role="group" aria-label="入场动画" id="fxAnim">
+          <button data-anim="pop" title="逐字放大、去模糊弹出">弹出</button>
+          <button data-anim="karaoke" title="整句先暗着出现，唱到哪个字就点亮哪个字（类似 Apple Music）">逐词高亮</button>
+          <button data-anim="fade" title="逐字柔和淡入，没有位移">淡入</button>
+          <button data-anim="rise" title="逐字从下方升起">上浮</button>
+        </div><span></span></div>
+      <div class="fxrow" id="fxExitRow"><label>离场</label>
+        <div class="seg wrap" role="group" aria-label="离场动画" id="fxExit">
+          <button data-exit="float" title="整句向上飘走，同时变模糊">上飘</button>
+          <button data-exit="fade" title="整句原地淡出">淡出</button>
+          <button data-exit="sink" title="整句往下沉并淡出">下沉</button>
+          <button data-exit="zoom" title="整句放大、模糊着散开">放大</button>
+          <button data-exit="wordUp" title="从第一个字开始，一个接一个向上飘散">逐字飘散</button>
+          <button data-exit="wordDown" title="从第一个字开始，一个接一个往下掉">逐字下落</button>
+        </div><span></span></div>
+      <div class="fxrow" id="fxExitDurRow"><label for="fxExitDur" title="离场动画持续多久">时长</label><input type="range" id="fxExitDur" min="20" max="200" step="5"><output id="fxExitDurV"></output></div>
+    </section>
+    <section class="fxsec" id="fxFontSec">
+      <div class="fxhead"><h3>字体</h3><button class="btn btn-sm" id="fxFontAll" title="列出这台电脑上安装的全部字体（浏览器会问一次许可，只用于列出名字）">读取全部系统字体</button></div>
+      <p class="fxtip" id="fxFontNote">只改歌词和译文的字体，不改封面标题和界面。选「默认」就用页面自带的字体。</p>
+      <p class="fxtip fxgrp"><b>歌词</b></p>
+      <div class="fxrow"><label for="fxFontMainZh">中文</label><select class="field-sel" id="fxFontMainZh" aria-label="歌词中文字体"></select><span></span></div>
+      <div class="fxrow"><label for="fxFontMainEn">英文</label><select class="field-sel" id="fxFontMainEn" aria-label="歌词英文字体"></select><span></span></div>
+      <div class="fxhead"><span style="font-size:13px;color:var(--dim)">加粗</span>
+        <label class="switch" title="开：用页面原来的粗体；关：普通粗细"><input type="checkbox" id="fxFontMainBold" aria-label="歌词加粗"><span></span></label></div>
+      <div class="fxrow"><label for="fxFontMainS" title="在原来大小的基础上放大或缩小">字号</label><input type="range" id="fxFontMainS" min="50" max="200" step="5"><output id="fxFontMainSV"></output></div>
+      <p class="fxtip fxgrp"><b>译文</b></p>
+      <div class="fxrow"><label for="fxFontSubZh">中文</label><select class="field-sel" id="fxFontSubZh" aria-label="译文中文字体"></select><span></span></div>
+      <div class="fxrow"><label for="fxFontSubEn">英文</label><select class="field-sel" id="fxFontSubEn" aria-label="译文英文字体"></select><span></span></div>
+      <div class="fxhead"><span style="font-size:13px;color:var(--dim)">加粗</span>
+        <label class="switch" title="开：加粗；关：普通粗细（默认）"><input type="checkbox" id="fxFontSubBold" aria-label="译文加粗"><span></span></label></div>
+      <div class="fxrow"><label for="fxFontSubS" title="在原来大小的基础上放大或缩小">字号</label><input type="range" id="fxFontSubS" min="50" max="200" step="5"><output id="fxFontSubSV"></output></div>
+    </section>
+    <section class="fxsec" id="fxBgSec">
+      <div class="fxhead"><h3>背景</h3></div>
+      <div class="fxrow"><label>样式</label>
+        <div class="seg" role="group" aria-label="背景样式" id="fxBg">
+          <button data-bg="black" title="纯黑背景">纯黑</button>
+          <button data-bg="flow" data-style="cover" title="把封面缩小、增强颜色后缓慢旋转、弯曲流动（类似 Apple Music）">封面流动</button>
+          <button data-bg="flow" data-style="blobs" title="从封面取几种主色，做成柔和的光斑漂动">主色光斑</button>
+        </div><span></span></div>
+      <div class="fxrow fxbgopt"><label>封面</label>
+        <div class="coverrow"><img id="fxCoverImg" alt=""><span id="fxCoverName"></span><b class="pal fxblobopt" id="fxPal" title="从封面里取出的主色"></b>
+          <button class="btn btn-sm" id="coverSearchBtn" title="在 QQ音乐、网易云、酷狗和 Apple Music 搜专辑封面">搜封面</button>
+          <label class="btn btn-sm" for="coverFile">选图片</label><input type="file" id="coverFile" accept="image/*" hidden></div><span></span></div>
+      <div class="fxrow fxbgopt"><label for="fxBgSpeed">流速</label><input type="range" id="fxBgSpeed" min="0" max="300" step="5"><output id="fxBgSpeedV"></output></div>
+      <div class="fxrow fxbgopt"><label for="fxBgPulse" title="背景跟着低音（鼓、贝斯）动起来的幅度，0 是关闭">律动</label><input type="range" id="fxBgPulse" min="0" max="100" step="5"><output id="fxBgPulseV"></output></div>
+      <div class="fxrow fxbgopt"><label>方式</label>
+        <div class="seg" role="group" aria-label="律动方式" id="fxBgPulseMode">
+          <button data-pm="breath" title="随低音强弱缓缓胀缩、带一点转动，像 Apple Music">呼吸</button>
+          <button data-pm="beat" title="每个鼓点都快速放大、闪亮一下，再迅速回落">节拍</button>
+        </div><span></span></div>
+      <p class="fxtip fxbgopt" id="fxBgPulseNote"></p>
+      <div class="fxrow fxbgopt fxblobopt"><label for="fxBgColors">颜色数</label><input type="range" id="fxBgColors" min="2" max="6" step="1"><output id="fxBgColorsV"></output></div>
+      <div class="fxrow fxbgopt"><label for="fxBgGrain" title="胶片一样的颗粒感，纯属风格；色带已经由抖动处理掉了，默认是 0">颗粒</label><input type="range" id="fxBgGrain" min="0" max="10" step="0.5"><output id="fxBgGrainV"></output></div>
+      <div class="fxrow fxbgopt"><label for="fxBgDim">压暗</label><input type="range" id="fxBgDim" min="0" max="80" step="1"><output id="fxBgDimV"></output></div>
+      <p class="fxtip fxbgopt">载入音频时会自动读取里面的封面，也可以自己选一张图。导出 MP4 会带上这个背景；透明 MOV / PNG 不画背景。开了流光后整个画面都在动，导出会慢一些，也只能导出完整画面。</p>
+    </section>
+    <section class="fxsec" id="fxGlowSec">
+      <div class="fxhead"><h3>辉光</h3>
+        <label class="switch" title="开启或关闭辉光"><input type="checkbox" id="fxGlowOn" aria-label="开启辉光"><span></span></label></div>
+      <div class="fxrow"><label>风格</label>
+        <div class="seg" role="group" aria-label="辉光风格" id="fxGlowStyle">
+          <button data-style="soft" title="自然的泛光，中心偏白，向外慢慢散开">柔光</button>
+          <button data-style="neon" title="颜色更饱和、更贴近文字">霓虹</button>
+          <button data-style="dream" title="光晕很大很淡，朦胧的感觉">梦幻</button>
+        </div><span></span></div>
+      <div class="fxrow"><label for="fxGlowStrength">强度</label><input type="range" id="fxGlowStrength" min="10" max="200" step="5"><output id="fxGlowStrengthV"></output></div>
+      <div class="fxrow"><label for="fxGlowRadius">范围</label><input type="range" id="fxGlowRadius" min="5" max="80" step="1"><output id="fxGlowRadiusV"></output></div>
+      <div class="fxrow" title="只有比这个更亮的字才发光。调高后，变暗的灰色歌词（未唱到的字、其他行、翻译）不再发光；0 = 所有字都发光"><label for="fxGlowThresh">阈值</label><input type="range" id="fxGlowThresh" min="0" max="90" step="5"><output id="fxGlowThreshV"></output></div>
+      <div class="fxrow"><label>颜色</label>
+        <div class="swatches" id="fxGlowSwatches">
+          <button class="sw" data-c="#ffffff" style="background:#ffffff" aria-label="白色"></button>
+          <button class="sw" data-c="#ffd27a" style="background:#ffd27a" aria-label="暖金"></button>
+          <button class="sw" data-c="#7ad0ff" style="background:#7ad0ff" aria-label="冰蓝"></button>
+          <button class="sw" data-c="#ff7ab6" style="background:#ff7ab6" aria-label="粉色"></button>
+          <button class="sw" data-c="#a78bff" style="background:#a78bff" aria-label="紫色"></button>
+          <input type="color" id="fxGlowColor" aria-label="自定义颜色">
+        </div><span></span></div>
+    </section>
+    <div class="actions">
+      <button class="btn" id="fxReset">恢复默认</button>
+      <button class="btn btn-solid" id="fxClose">完成</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="exportModal" hidden>
+  <div class="panel" role="dialog" aria-modal="true" aria-labelledby="xTitle">
+    <div class="ph"><h2 id="xTitle">导出歌词视频</h2><span class="xinfo" id="xInfo"></span></div>
+    <canvas id="xPreview" width="1920" height="1080" aria-label="视频画面预览"></canvas>
+    <div class="fields">
+      <label class="field" for="xSize"><span>画面尺寸</span>
+        <select id="xSize">
+          <option value="1080">1920 × 1080 横屏</option>
+          <option value="v1080">1080 × 1920 竖屏</option>
+          <option value="2160">3840 × 2160 4K</option>
+          <option value="720">1280 × 720</option>
+        </select></label>
+      <label class="field" for="xFps"><span>帧率</span>
+        <select id="xFps"><option value="30">30 fps</option><option value="60">60 fps</option></select></label>
+      <label class="field field-wide" for="xFmt"><span>格式与背景</span>
+        <select id="xFmt">
+          <option value="mp4">MP4 · 带背景</option>
+          <option value="mov">MOV · 透明背景（PNG 编码，带透明通道）</option>
+          <option value="zip">PNG 序列 · 透明背景（打包为 ZIP）</option>
+        </select></label>
+      <label class="field field-wide" for="xQual"><span>画质 / 防色带</span>
+        <select id="xQual">
+          <option value="std">标准（文件最小）</option>
+          <option value="high">高 · 恒定画质 + 细颗粒（推荐）</option>
+          <option value="max">极高 · 几乎无损 + 明显颗粒（色带最少，文件最大）</option>
+        </select></label>
+      <label class="field field-wide" for="xSpeed"><span>编码速度</span>
+        <select id="xSpeed">
+          <option value="quality">画质优先（编码器用较慢、较细的模式）</option>
+          <option value="speed">速度优先（显卡快速模式，导出更快，画质略降）</option>
+        </select></label>
+      <label class="check field-wide" for="xCrop"><input type="checkbox" id="xCrop" checked> 只导出歌词区域 <span class="xinfo" id="xCropInfo"></span></label>
+      <label class="check field-wide" for="xDisk"><input type="checkbox" id="xDisk" checked> 开始前选择保存位置 <span class="xinfo" id="xDiskInfo">可以选任意磁盘和文件夹，边导出边写进文件，不占内存</span></label>
+      <label class="check field-wide" for="xAudio"><input type="checkbox" id="xAudio" checked> 带上音频 <span class="xinfo" id="xAudioInfo"></span></label>
+    </div>
+    <p class="note" id="xNote"></p>
+    <p class="note xest" id="xEst" hidden></p>
+    <div class="track"><div class="fill" id="xBar"></div></div>
+    <p class="xmsg" id="xMsg" aria-live="polite"></p>
+    <div class="actions">
+      <button class="btn" id="xCancel">关闭</button>
+      <button class="btn" id="xHide" hidden title="关掉这个窗口，导出在后台继续，可以接着听歌、看歌词">后台导出</button>
+      <button class="btn" id="xSave" hidden>保存视频</button>
+      <button class="btn btn-solid" id="xStart">开始导出</button>
+    </div>
+  </div>
+</div>
+
+
+<button class="xpill" id="xPill" hidden></button>
+<script src="vendor/mp4-muxer.js"></script>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

@@ -269,7 +269,25 @@ def save_geometry(g):
         print("window.json not saved:", e)
 
 
+def unblock_dotnet():
+    """A zip that came through a browser or a chat app carries the "from the internet" mark, and Explorer copies it
+    onto every file it unpacks. The .NET Framework refuses to load a marked assembly, so pythonnet fails with
+    "Failed to resolve Python.Runtime.Loader.Initialize" and there is no window. The mark is a side stream of the
+    file; deleting it is what "Unblock" in the file's properties does."""
+    site = os.path.join(os.path.dirname(sys.executable), "Lib", "site-packages")
+    for pkg in ("pythonnet", "clr_loader", "webview"):
+        for folder, _, names in os.walk(os.path.join(site, pkg)):
+            for n in names:
+                if n.lower().endswith(".dll"):
+                    try:
+                        os.remove(os.path.join(folder, n) + ":Zone.Identifier")
+                        print("unblocked", n)
+                    except OSError:
+                        pass                     # not marked (the usual case), or the folder is read-only
+
+
 def run_window(url):
+    unblock_dotnet()
     import webview
     geo = load_geometry()
     maximized = geo.pop("maximized", False)

@@ -495,7 +495,7 @@ function drawLiveGL(){
     // the page's type size, but no larger than the export's rule allows for the height (a wide, low window would otherwise
     // show two or three lines and look different from the exported video)
     const M = canvasMeasurer(ctx, W, H, Math.min(cssFs * dpr, H * 0.09));
-    liveGLx = { tl, ctx, M, segs: buildTimeline(M), song, probeM: Object.assign(Object.create(M), { sprites: { draw(){}, drawLit(){} }, _probe: true }) };
+    liveGLx = { tl, ctx, M, segs: buildTimeline(M), song, probeM: Object.assign(Object.create(M), { sprites: { draw(){}, drawLit(){}, drawLitGroup(){} }, _probe: true }) };
     liveGLKey = key; liveGLLast = '';
   }
   const X = liveGLx, t = lt(now());

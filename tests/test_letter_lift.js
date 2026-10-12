@@ -47,6 +47,16 @@ const g = [2.5, 3.5, 4, 4.4, 4.9].map(t => holdGlow(kar(2), 1, t));
 check('it swells while the word is sung, is at its most as the word ends, then settles to nothing', g[0] > 0 && g[1] > g[0] && g[2] > g[1] && g[3] < g[2] && g[4] === 0, g.map(v => v.toFixed(3)).join(' '));
 check('never more than a little', Math.abs(g[2] - HOLD.gain) < 1e-9 && HOLD.gain <= 0.35);
 check('a word held for a middling time gets part of it', holdGlow(kar(1.3), 1, 3.3) > 0 && holdGlow(kar(1.3), 1, 3.3) < HOLD.gain * 0.6);
+fx.glow.hold = 2;
+check('长音增亮 scales it', Math.abs(holdGlow(kar(2), 1, 4) - HOLD.gain * 2) < 1e-9);
+fx.glow.hold = 0;
+check('and at 0 there is none', holdGlow(kar(2), 1, 4) === 0);
+fx.glow.hold = 1;
+fx.glow.holdFrom = 0.4;
+check('触发时长 lets a shorter word in', holdGlow(kar(0.6), 1, 2.6) > 0 && Math.abs(holdGlow(kar(1.4), 1, 3.4) - HOLD.gain) < 1e-9);
+fx.glow.holdFrom = 2.5;
+check('or keeps a longer one out', holdGlow(kar(2), 1, 4) === 0);
+delete fx.glow.holdFrom;
 fx.glow.on = false;
 check('none at all when the glow is switched off', holdGlow(kar(2), 1, 4) === 0);
 

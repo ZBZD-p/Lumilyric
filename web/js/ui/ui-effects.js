@@ -101,10 +101,14 @@ function applyFx(){
   $('fxGlowRadiusV').textContent = g.radius.toFixed(2) + ' em';
   $('fxGlowThresh').value = Math.round((g.thresh || 0) * 100);
   $('fxGlowThreshV').textContent = (g.thresh || 0) > 0 ? '亮度 ' + Math.round(g.thresh * 100) + '%' : '全部发光';
+  $('fxGlowHold').value = Math.round(g.hold * 100);
+  $('fxGlowHoldV').textContent = g.hold > 0 ? Math.round(g.hold * 100) + '%' : '关';
+  $('fxGlowHoldFrom').value = g.holdFrom;
+  $('fxGlowHoldFromV').textContent = g.holdFrom.toFixed(1) + ' s';
   $('fxGlowColor').value = g.color;
   document.querySelectorAll('#fxGlowStyle button').forEach(b => b.setAttribute('aria-pressed', b.dataset.style === (g.style || 'soft')));
   document.querySelectorAll('#fxGlowSwatches .sw').forEach(b => b.setAttribute('aria-pressed', b.dataset.c === g.color));
-  ['fxGlowStrength', 'fxGlowRadius', 'fxGlowThresh'].forEach(id => { const el = $(id); el.style.setProperty('--p', ((el.value - el.min) / (el.max - el.min) * 100) + '%'); });
+  ['fxGlowStrength', 'fxGlowRadius', 'fxGlowThresh', 'fxGlowHold', 'fxGlowHoldFrom'].forEach(id => { const el = $(id); el.style.setProperty('--p', ((el.value - el.min) / (el.max - el.min) * 100) + '%'); });
 }
 function setFx(patch){ Object.assign(fx.glow, patch); saveFx(); applyFx(); }
 function setAnim(v){ if (!ANIMS.includes(v) || v === fx.anim) return; fx.anim = v; saveFx(); applyFx(); setCur(null); render(true); }
@@ -237,6 +241,8 @@ $('fxGlowOn').onchange = e => setFx({ on: e.target.checked });
 $('fxGlowStrength').oninput = e => setFx({ strength: e.target.value / 100 });
 $('fxGlowRadius').oninput = e => setFx({ radius: e.target.value / 100 });
 $('fxGlowThresh').oninput = e => setFx({ thresh: e.target.value / 100 });
+$('fxGlowHold').oninput = e => setFx({ hold: e.target.value / 100 });
+$('fxGlowHoldFrom').oninput = e => setFx({ holdFrom: +e.target.value });
 $('fxGlowColor').oninput = e => setFx({ color: e.target.value });
 document.querySelectorAll('#fxGlowStyle button').forEach(b => b.onclick = () => setFx({ style: b.dataset.style, on: true }));
 document.querySelectorAll('#fxGlowSwatches .sw').forEach(b => b.onclick = () => setFx({ color: b.dataset.c, on: true }));

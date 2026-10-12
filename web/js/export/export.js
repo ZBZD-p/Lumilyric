@@ -117,7 +117,7 @@ async function estimateSize(){
     cv.width = EW; cv.height = EH; ctx.setTransform(1, 0, 0, 1, -b.x, -b.y);
   }
   const probe = { fillRect(){}, clearRect(){}, beginPath(){}, rect(){}, clip(){}, save(){}, restore(){}, translate(){}, scale(){}, drawImage(){}, setTransform(){}, getTransform(){ return new DOMMatrix(); }, set globalAlpha(v){}, set globalCompositeOperation(v){}, set fillStyle(v){}, set filter(v){} };
-  const probeM = Object.assign(Object.create(M), { sprites: { draw(){}, drawLit(){} }, _probe: true });
+  const probeM = Object.assign(Object.create(M), { sprites: { draw(){}, drawLit(){}, drawLitGroup(){} }, _probe: true });
   const keyAt = t => drawFrame(probe, W, H, probeM, segs, lt(t), true);
   const dur = total() + 1, frames = Math.ceil(dur * fps);
   // 1) how many frames change: sample the song evenly, compare each sample with the frame right after it
@@ -483,7 +483,7 @@ async function runExport(){
       ctx.setTransform(1, 0, 0, 1, -box.x, -box.y);     // keep drawing in full-frame coordinates
     }
     const probe = { fillRect(){}, save(){}, restore(){}, translate(){}, scale(){}, drawImage(){}, set globalAlpha(v){}, set globalCompositeOperation(v){}, set fillStyle(v){}, set filter(v){} };
-    const probeM = Object.assign(Object.create(M), { sprites: { draw(){}, drawLit(){} }, _probe: true });
+    const probeM = Object.assign(Object.create(M), { sprites: { draw(){}, drawLit(){}, drawLitGroup(){} }, _probe: true });
     const staticKeyAt = t => drawFrame(probe, W, H, probeM, segs, t);
     const dur = total() + 1;
     const frames = Math.ceil(dur * fps);

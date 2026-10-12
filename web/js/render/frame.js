@@ -21,10 +21,11 @@ export {
    Landscape: the cover with title and artist on the left, the lyrics on the right half.
    Portrait: a small cover with title and artist across the top, the lyrics below. */
 const useCoverPanel = () => !!fx.cover;
-/* The area the live picture is laid out in. With the cover panel it is the whole window, exactly like an exported
-   frame (cover and lyrics sit where they will in the video; the controls float over it and hide while playing).
-   Without it, the stage between the header and the controls, as the web view has always done. */
-const liveRect = () => useCoverPanel() ? { left: 0, top: 0, width: innerWidth, height: innerHeight - sheetHeight() } : $('stage').getBoundingClientRect();
+/* The area the live picture is laid out in: the whole window, exactly like an exported frame (cover and lyrics sit
+   where they will in the video; the controls float over it and hide while playing). The same with the cover panel
+   and without it, so that switching it changes nothing but the cover's side. (Only the web view, which is page text
+   and not drawn here, still sits in the stage between the header and the controls.) */
+const liveRect = () => ({ left: 0, top: 0, width: innerWidth, height: innerHeight - sheetHeight() });
 /* narrow (portrait) windows: the settings card comes up from the bottom and would cover the line being sung, so while
    it is open the picture is laid out in the part of the window above it */
 function sheetHeight(){

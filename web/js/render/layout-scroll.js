@@ -207,12 +207,15 @@ function drawScrollOne(ctx, W, H, M, t, shiftFn, fade){
           if (ex - SE / 2 >= tk.w) lit++;
           const hg = holdGlow(it.kar, tk.k, t) * act;
           if (hg > 0) moving = true;
+          const parts = [];                            // the letters of a word that lifts letter by letter
           if (liftWord(tk, M2, it.kar, t, SE, (l, s, dx, w) => {
             const yy = ry - 0.05 * fs * l * act, xs = x + dx, e = ex - dx;       // e: the sweep edge, relative to this piece
-            if (hg > 0) SP.draw(ctx, s, false, xs, yy, hg, HOLD.blur * bs + blur);      // a long last word: a little more light around it
+            if (hg > 0) SP.drawLit(ctx, s, false, xs, yy, hg, e - SE / 2 >= w + 1 ? Infinity : e, SE, true, hg, HOLD.blur * bs + blur);      // a long last word: a little more light around it, as far as the sweep has come
+            if (s !== tk.s) return parts.push({ s, dx, dy: yy - ry, w });
             SP.drawLit(ctx, s, false, xs, yy, SCROLL.dim, Infinity, 0, false, undefined, blur);
             if (e + SE / 2 > 0) SP.drawLit(ctx, s, false, xs, yy, act * (drawOnColour ? 1 : 1 - SCROLL.dim), e - SE / 2 >= w + 1 ? Infinity : e, SE, true, SCROLL.dim + (1 - SCROLL.dim) * act, blur);
           }, blur > 0.3)) moving = true;      // still blurred as the line comes in: in one piece
+          if (parts.length) SP.drawLitGroup(ctx, parts, x, ry, SCROLL.dim, ex + SE / 2 > 0 ? act * (drawOnColour ? 1 : 1 - SCROLL.dim) : 0, ex, SE, SCROLL.dim + (1 - SCROLL.dim) * act, blur, tk.w);
         } else {
           SP.draw(ctx, tk.s, false, x, ry, it.kar ? SCROLL.dim : base, blur);
         }

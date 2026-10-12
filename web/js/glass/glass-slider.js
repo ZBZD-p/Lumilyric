@@ -36,7 +36,7 @@ function glassSlider(input){
     if (cv.width !== w || cv.height !== h){ cv.width = w; cv.height = h; }
     const c = cv.getContext('2d');
     c.setTransform(dpr, 0, 0, dpr, 0, 0); c.clearRect(0, 0, W + 2 * UM, GS.h + 2 * UM);
-    c.save(); c.beginPath(); c.roundRect(UM, UM + GS.h / 2 - 3, W, 6, 3); c.clip();                 // the track (style.css .gst): 6 px, rounded
+    c.save(); c.beginPath(); c.roundRect(UM + GS.kw / 2, UM + GS.h / 2 - 3, W - GS.kw, 6, 3); c.clip();       // the track (style.css .gst): 6 px, rounded
     c.fillStyle = 'rgba(255,255,255,.16)'; c.fillRect(UM, UM, W, GS.h);
     c.fillStyle = '#fff'; c.fillRect(UM, UM, fillTo, GS.h);
     c.restore();
@@ -50,6 +50,8 @@ function glassSlider(input){
     const glass = glassOn(), stretch = Math.min(0.3, Math.abs(pos.v) * travel / 900) * (0.35 + 0.65 * Lc);
     const gw = glass ? GS.lw : GS.kw * 1.08, gh = glass ? GS.lh : GS.kh * 1.12;
     const w = (GS.kw + (gw - GS.kw) * L) * (1 + stretch), h = Math.max(6, (GS.kh + (gh - GS.kh) * L) * (1 - stretch * 0.4));
+    // the track is half a knob shorter at each end, so the knob's middle goes from one end of it to the other and the
+    // fill ends under it: none at the least, the whole track at the most, pressed or not
     const cx = GS.kw / 2 + p * travel;
     knob.style.width = w + 'px'; knob.style.height = h + 'px';
     knob.style.transform = `translate(${cx - w / 2}px,${GS.h / 2 - h / 2}px)`;
@@ -59,7 +61,7 @@ function glassSlider(input){
     knob.classList.toggle('lifted', lens && Lc > 0.02);
     if (lens && Lc > 0.02) lensApply('gsLens', w, h, GS.lw, GS.lh, Lc);
     if (gpu && Lc > 0.01){ const r = wrap.getBoundingClientRect(); cur = { x: r.left + cx - w / 2, y: r.top + GS.h / 2 - h / 2, w, h, a: Lc, fill: Math.max(0, Math.min(W, cx)) }; } else cur = null;
-    fill.style.transform = `scaleX(${Math.max(0, Math.min(1, cx / W)).toFixed(4)})`;
+    fill.style.transform = `scaleX(${Math.max(0, Math.min(1, p)).toFixed(4)})`;
   }
   function frame(t){
     raf = 0;

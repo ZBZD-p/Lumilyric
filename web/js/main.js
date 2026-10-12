@@ -57,11 +57,12 @@ function fpsTick(){
     const bg = $('bgFlow'), bgOn = fx.bg.mode === 'flow' && bg.width > 2;
     const how = useWebGL() && liveBloom ? 'WebGL' : canvasView ? '画布' : '网页';
     const extra = [useScroll() ? '滚动歌词' : '', useWordMode() ? '逐词' : '', useCoverPanel() ? '封面' : '', fx.glow.on ? '辉光' : ''].filter(Boolean).join(' · ');
-    el.innerHTML = `<b>${Math.round(fps)}</b> FPS · 最慢一帧 ${fpsWorst.toFixed(0)} ms\n` +
+    // 精简显示 (fx.perfLite): the frame rate and the slowest frame, nothing else
+    el.innerHTML = `<b>${Math.round(fps)}</b> FPS · 最慢一帧 ${fpsWorst.toFixed(0)} ms` + (fx.perfLite ? '' : '\n' +
       `${how}渲染${extra ? ' · ' + extra : ''}\n` +
       `歌词 ${rw}×${rh}（窗口 ${innerWidth}×${innerHeight} × ${+dpr.toFixed(2)}）` +
       (bgOn ? `\n背景 ${bg.width}×${bg.height}${bg.width < Math.round(innerWidth * dpr) - 1 ? '（放大铺满窗口）' : ''}` : '') +
-      (gpuName() ? `\n${gpuName()}` : '');
+      (gpuName() ? `\n${gpuName()}` : ''));
     fpsN = 0; fpsT0 = t; fpsWorst = 0;
   }
 }
@@ -80,6 +81,7 @@ function tick(){
     $('seek').value = v; $('seek').style.setProperty('--p', v / 10 + '%');
   }
   $('time').textContent = fmt(t) + ' / ' + fmt(T);
+  $('timeL').textContent = fmt(t); $('timeR').textContent = '-' + fmt(Math.max(0, T - t));      // AM 布局: gone by, and still to come, under the two ends of the bar
   requestAnimationFrame(tick);
 }
 
@@ -94,6 +96,7 @@ function setMode(m){
   if (typeof modeChanged === 'function') modeChanged(was);   // scrolling lyrics glide and fade to the new language
   try { localStorage.setItem('lrc-mode', m); } catch(e){}
   document.querySelectorAll('.seg button[data-mode]').forEach(b => b.setAttribute('aria-pressed', b.dataset.mode === m));
+  $('amLang').setAttribute('aria-pressed', String(m === 'both'));      // AM 布局: 文A is lit while the translation shows (style.css .ampill)
   render(true);
 }
 document.querySelectorAll('.seg button[data-mode]').forEach(b => b.onclick = () => setMode(b.dataset.mode));
@@ -253,14 +256,16 @@ addEventListener('keydown', e => {
   else if (e.code === 'ArrowLeft'){ e.preventDefault(); seek(now() - 5); }
 });
 
-/* hide controls while playing and idle */
+/* hide controls while playing and idle. Not while the pointer rests on one of them (a button about to be pressed
+   again must not fade away under it), nor while the menu is open; a click counts as a sign of life like a movement. */
 let idleT;
+const overControl = () => !!document.querySelector('button:hover, input:hover, select:hover, label:hover, .menu:hover, .tbar:hover, .seg:hover, .amvol:hover, .ampill:hover');
 function poke(){
   document.body.classList.remove('idle');
   clearTimeout(idleT);
-  if (playing) idleT = setTimeout(() => { if (document.body.classList.contains('menu-open')) return poke(); document.body.classList.add('idle'); }, 2600);
+  if (playing) idleT = setTimeout(() => { if (document.body.classList.contains('menu-open') || overControl()) return poke(); document.body.classList.add('idle'); }, 2600);
 }
-['mousemove', 'touchstart', 'keydown'].forEach(ev => addEventListener(ev, poke, { passive: true }));
+['mousemove', 'mousedown', 'touchstart', 'keydown'].forEach(ev => addEventListener(ev, poke, { passive: true }));
 
 setMode(mode);
 requestAnimationFrame(tick);

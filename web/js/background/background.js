@@ -336,6 +336,37 @@ function coverLook(d, n){                           // the colours pushed and bl
       }
     }
   }
+  coverRelief(d, n);
+}
+/* A cover that is nearly one colour all over leaves a background that looks like a flat fill, however it flows. Such
+   a picture is given some relief, and no more than it lacks: how far its brightness and its colours range is measured
+   (between the 5 % and the 95 % mark) and compared with RELIEF.spread. Short of that, first the light and dark it does
+   have is pulled apart (at most gain times); what is still missing comes from a few broad, soft swells of lighter and
+   darker laid over it, the colour turned a few degrees with them (hue: at most that many, for a picture with nothing
+   in it at all). The colour itself stays the cover's. A cover with enough in it is not touched. */
+const RELIEF = { spread: 64, gain: 3, hue: 10 };
+function coverRelief(d, n){
+  const N = n * n, Y = new Float32Array(N), U = new Float32Array(N), V = new Float32Array(N);
+  for (let i = 0, j = 0; i < N; i++, j += 4){ Y[i] = d[j] * 0.3 + d[j + 1] * 0.59 + d[j + 2] * 0.11; U[i] = d[j] - d[j + 1]; V[i] = d[j + 2] - (d[j] + d[j + 1]) / 2; }
+  const range = A => { const o = Float32Array.from(A).sort(); return [o[Math.floor(N * 0.05)], o[Math.floor(N * 0.95)]]; };
+  const [y0, y1] = range(Y), [u0, u1] = range(U), [v0, v1] = range(V), ys = y1 - y0;
+  const has = Math.max(ys, u1 - u0, v1 - v0);
+  if (has >= RELIEF.spread) return;
+  const g = ys > 4 ? Math.min(RELIEF.gain, RELIEF.spread / ys) : 1, mid = (y0 + y1) / 2;
+  const lack = Math.max(0, RELIEF.spread - Math.max(has, ys * g)), amp = lack / 2, turn = RELIEF.hue * Math.PI / 180 * lack / RELIEF.spread;
+  for (let yy = 0, i = 0, j = 0; yy < n; yy++) for (let xx = 0; xx < n; xx++, i++, j += 4){
+    // the swells: two slow waves across the picture, -1 ... 1, not the same in any two corners
+    const w = 0.6 * Math.sin(TAU * (xx / n * 0.9 + 0.13)) * Math.cos(TAU * (yy / n * 0.7 + 0.31)) + 0.4 * Math.sin(TAU * ((xx + yy) / n * 0.6 + 0.57));
+    const y = Y[i], to = Math.max(0, y + (y - mid) * (g - 1) + w * amp);
+    let r = d[j], gr = d[j + 1], b = d[j + 2];
+    if (y > 24){ const k = to / y; r *= k; gr *= k; b *= k; } else { r += to - y; gr += to - y; b += to - y; }      // lighter or darker in its own colour; nearly black has none
+    if (turn){                                   // the colour turned about grey
+      const c = Math.cos(w * turn), sn = Math.sin(w * turn), p = (1 - c) / 3, q = sn * 0.57735;
+      const R = r * (c + p) + gr * (p - q) + b * (p + q), G = r * (p + q) + gr * (c + p) + b * (p - q), B = r * (p - q) + gr * (p + q) + b * (c + p);
+      r = R; gr = G; b = B;
+    }
+    d[j] = r; d[j + 1] = gr; d[j + 2] = b;
+  }
 }
 /* the same of a picture that changes (the frame a moving cover is showing): one small canvas, used again each time */
 let lookCv = null, lookX = null;

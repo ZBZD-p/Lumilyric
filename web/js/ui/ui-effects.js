@@ -52,8 +52,11 @@ function applyFx(){
   document.querySelectorAll('#fxPerfPos button').forEach(b => b.setAttribute('aria-pressed', b.dataset.p === (fx.perfPos || 'tc')));
   $('fxPerfSize').value = Math.round((fx.perfSize || 1) * 100); $('fxPerfSizeV').textContent = Math.round((fx.perfSize || 1) * 100) + '%';
   $('fxPerfSize').style.setProperty('--p', (($('fxPerfSize').value - 70) / 130 * 100) + '%');
-  $('fxPerfPosRow').hidden = $('fxPerfSizeRow').hidden = !fx.showFps;
+  $('fxPerfLite').checked = !!fx.perfLite;
+  $('fxPerfLiteRow').hidden = $('fxPerfPosRow').hidden = $('fxPerfSizeRow').hidden = !fx.showFps;
   $('fxCover').checked = !!fx.cover; setCoverPanelDirty(true);
+  $('fxAM').checked = !!fx.am && !!fx.cover;
+  $('amLyr').setAttribute('aria-pressed', String(fx.amLyrics !== false));      // AM 布局: the lyrics button (js/ui/am.js)
   if (!fx.showFps) $('fps').hidden = true;
   $('fxRenderNote').textContent = fx.render === 'webgl'
     ? '显卡泛光（线性光、逐级缩放叠加）。网页上看到的和导出的视频是同一个画面。'
@@ -123,6 +126,7 @@ document.querySelectorAll('#fxAnim button').forEach(b => b.onclick = () => setAn
 document.querySelectorAll('#fxLayout button').forEach(b => b.onclick = () => { const was = fx.layout; fx.layout = b.dataset.l; layoutChange(was, fx.layout); saveFx(); applyFx(); setCur(null); render(true); });
 const setFps = v => { fx.showFps = v; late.setFpsT0(0); late.setFpsN(0); late.setFpsLast(0); saveFx(); applyFx(); };
 $('fxFps').onchange = e => setFps(e.target.checked);
+$('fxPerfLite').onchange = e => { fx.perfLite = e.target.checked; late.setFpsT0(0); late.setFpsN(0); late.setFpsLast(0); saveFx(); applyFx(); };      // the panel is written again at once
 document.querySelectorAll('#fxPerfPos button').forEach(b => b.onclick = () => { fx.perfPos = b.dataset.p; saveFx(); applyFx(); });
 $('fxPerfSize').oninput = e => { fx.perfSize = e.target.value / 100; saveFx(); applyFx(); };
 $('fxWordAnim').append(...Object.entries(WORD_ANIMS).map(([k, A]) => { const b = document.createElement('button'); b.dataset.wa = k; b.textContent = A.name; b.onclick = () => { fx.wordAnim = k; saveFx(); applyFx(); }; return b; }));
@@ -131,6 +135,46 @@ document.querySelectorAll('#fxAlign button').forEach(b => b.onclick = () => { fx
 $('fxBlur').oninput = e => { fx.scrollBlur = e.target.value / 100; saveFx(); applyFx(); };
 $('fxLangShow').onchange = e => { fx.langSwitch = e.target.checked; saveFx(); applyFx(); };
 $('fxCover').onchange = e => { fx.cover = e.target.checked; saveFx(); applyFx(); setCur(null); render(true); };
+/* AM 布局 on or off. It needs the cover: switched on with it. The change is played in two parts.
+   The bar at the bottom of the window is not turned into the AM layout's controls: it drops out of the window (on),
+   or comes up from below it (off), as the piece of glass it is (style.css body.am-barout / am-barin0 / am-barin; the
+   glass is drawn from where the bar is, so it goes along).
+   Everything else is one movement (a view transition, where the browser has them): the browser takes a picture of
+   the page as it is, the page is set out the new way in one go, and what both layouts have travels from its old
+   place to its new one, changing size on the way: the cover, the title and the artist (body.vt-am names them). The
+   rest melts from the one picture into the other. What only the AM layout has then comes up by itself (amIn,
+   amBarIn): its progress line grows from its left end, the buttons one after another. */
+const AM_BAR = { out: 300, up: 650 };                   // ms: the bar's drop before anything else moves; how long its way up is watched
+let amSwitching = 0;
+function setAM(on){
+  const body = document.body, calm = matchMedia('(prefers-reduced-motion:reduce)').matches, my = ++amSwitching;
+  const go = () => {
+    body.classList.remove('am-barout');
+    if (!on && !calm) body.classList.add('am-barin0');   // the bar starts below the window ...
+    fx.am = on;
+    if (fx.am) fx.cover = true;
+    saveFx(); applyFx(); setCur(null); render(true);
+    if (typeof late.updateCoverPanel === 'function') late.updateCoverPanel();      // the new places now, not a frame later
+    if (!on && !calm) requestAnimationFrame(() => requestAnimationFrame(() => {     // ... and comes up
+      body.classList.add('am-barin'); body.classList.remove('am-barin0');
+      setTimeout(() => { if (my === amSwitching) body.classList.remove('am-barin'); }, AM_BAR.up);
+    }));
+  };
+  const move = () => {
+    if (my !== amSwitching) return;
+    if (typeof document.startViewTransition !== 'function' || calm) return go();
+    body.classList.add('vt-am');
+    let tr;
+    try { tr = document.startViewTransition(go); } catch (err){ body.classList.remove('vt-am'); return go(); }
+    // a transition the browser gives up on (the window is not being drawn, say) has still set the layout: nothing to report
+    tr.ready.catch(() => {}); tr.updateCallbackDone.catch(() => {});
+    tr.finished.catch(() => {}).then(() => body.classList.remove('vt-am'));
+  };
+  body.classList.remove('am-barin', 'am-barin0');
+  if (on && !calm && !body.classList.contains('am')){ body.classList.add('am-barout'); setTimeout(move, AM_BAR.out); }
+  else move();
+}
+$('fxAM').onchange = e => setAM(e.target.checked);
 document.querySelectorAll('#fxRender button').forEach(b => b.onclick = () => { fx.render = b.dataset.r; saveFx(); applyFx(); setCur(null); render(true); });
 document.querySelectorAll('#fxExit button').forEach(b => b.onclick = () => { fx.exit = b.dataset.exit; saveFx(); applyFx(); });
 $('fxExitDur').oninput = e => { fx.exitDur = e.target.value / 100; saveFx(); applyFx(); };

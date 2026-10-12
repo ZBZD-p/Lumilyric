@@ -31,4 +31,5 @@ import './ui/dropdown.js';
 import './ui/tooltip.js';
 import './render/smooth-scroll.js';
 import './ui/menu.js';
+import './ui/am.js';
 import './ui/desktop.js';

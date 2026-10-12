@@ -203,7 +203,10 @@ function followSaveCover(blob, tid, side){
 const COVER_MIN = 400, COVER_ASK = 85, COVER_AUTO = 95;   // px of the shorter side (below it a better cover is looked for); match score (0-100) needed to ask / to replace without asking
 const cvNorm = t => String(t || '').normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
 const cvClean = t => String(t || '').replace(/[\(（\[【《<].*?[\)）\]】》>]/g, ' ').replace(/\s+[-–—]\s+.*$/, '');
-const cvArtists = t => new Set(String(t || '').normalize('NFKC').toLowerCase().split(/[\/、,，&;；]|\s+x\s+|\s+feat\.?\s+/).map(cvNorm).filter(Boolean));
+/* the artists of a song, each as it is written and, when the player adds a second name in brackets ("NewJeans (뉴진스)"),
+   also by each of the two names alone: other sites give only one of them */
+const cvArtists = t => new Set(String(t || '').normalize('NFKC').toLowerCase().split(/[\/、,，&;；]|\s+x\s+|\s+feat\.?\s+/)
+  .flatMap(a => [a, a.replace(/[\(\[【《<].*?[\)\]】》>]/g, ' '), ...[...a.matchAll(/[\(\[【《<](.*?)[\)\]】》>]/g)].map(m => m[1])]).map(cvNorm).filter(Boolean));
 /* raw names compared the way people do: "Dawn FM (Explicit)" and "Dawn FM" and "Best Friends - Single" are the
    same release for a cover. 1 = identical, 0.95 = identical once brackets / "- Single" are dropped, 0.6 = contained */
 function cvSame(wantRaw, gotRaw){
@@ -259,9 +262,13 @@ function followCoverItems(s, my){
   return followFound.p;
 }
 /* A moving cover (Apple Music, see cover_search.py) comes before any picture: when the song's album has one, it is
-   used without asking. Only for a certain match, and only while the cover is shown at all (it is a download of some
-   ten MB, kept on disk afterwards). "(Explicit)" / "[Clean]" in the player's album name is the same album, and the
-   same cover. Returns true when the moving cover is in place. */
+   used without asking, and only while the cover is shown at all (it is a download of some ten MB, kept on disk
+   afterwards). "(Explicit)" / "[Clean]" in the player's album name is the same album, and the same cover.
+   The album itself comes first. Failing that, another edition of it will do (MOTION_OK: the same artist, and the same
+   album name once what is in brackets is left out: "... (Deluxe Edition)", "... (Alternate World)"): players often
+   name the deluxe edition where Apple Music has the moving cover on the plain one only. Its picture may then differ a
+   little from the player's own. Returns true when the moving cover is in place. */
+const MOTION_OK = 85;
 let followMoving = null;                           // { tid, el }: the song whose moving cover was put up, and that video
 const cvTags = t => String(t || '').replace(/[\(（\[【]\s*(explicit|clean)\s*[\)）\]】]/ig, ' ').trim();
 async function followMotion(s0, my){
@@ -269,7 +276,7 @@ async function followMotion(s0, my){
   const f = await followCoverItems(s0, my);
   if (!f || my !== followCoverSeq || !followOn) return false;
   const s = { ...f.s, album: cvTags(f.s.album), title: cvTags(f.s.title) };
-  const pick = f.items.filter(it => it.motion && it.am).map(it => ({ it, sc: coverMatch(it, s) })).filter(x => x.sc > COVER_AUTO).sort((a, b) => b.sc - a.sc)[0];
+  const pick = f.items.filter(it => it.motion && it.am).map(it => ({ it, sc: coverMatch(it, s) })).filter(x => x.sc >= MOTION_OK).sort((a, b) => b.sc - a.sc)[0];
   if (!pick) return false;
   try {
     const r = await fetch(`/api/cover/motion?id=${encodeURIComponent(pick.it.am[0])}&cc=${encodeURIComponent(pick.it.am[1])}`);
@@ -278,7 +285,7 @@ async function followMotion(s0, my){
     if (my !== followCoverSeq || !followOn) return false;
     if (!await setCoverVideo(blob, `${pick.it.title} · ${pick.it.source}（动态）`)) return false;
     followMoving = { tid: s0.trackId, el: coverVideo };
-    followLyr = (followLyr ? followLyr + ' · ' : '') + `封面已换成 ${pick.it.source} 的动态封面（匹配度 ${pick.sc}%）`;
+    followLyr = (followLyr ? followLyr + ' · ' : '') + `封面已换成 ${pick.it.source} 的动态封面（${pick.sc > COVER_AUTO ? '' : '同一专辑的另一个版本，'}匹配度 ${pick.sc}%）`;
     followStatus();
     return true;
   } catch (e){ return false; }

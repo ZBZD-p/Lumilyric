@@ -77,7 +77,9 @@ body.idle{cursor:none}
 .covart{position:relative;border-radius:var(--cr);background:#222 center/cover no-repeat;box-shadow:0 calc(var(--cs) * .04) calc(var(--cs) * .12) rgba(0,0,0,.45)}
 .covvid{position:absolute;inset:0;width:100%;height:100%;border-radius:inherit;object-fit:cover;pointer-events:none}
 .covold{position:absolute;inset:0;border-radius:inherit;background:center/cover no-repeat;opacity:0;pointer-events:none}
-.covti,.covar{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-family:"Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif}
+/* padding-bottom: the line is 1.2 high (updateCoverPanel) and long names are cut off with "…", which also cut the tails
+   of g, y, p at the foot of the line; the room below lets them show, without moving the text */
+.covti,.covar{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-bottom:.3em;font-family:"Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif}
 .covti{color:#fff;font-weight:700}
 .covar{color:rgba(255,255,255,.6);font-weight:400}
 body.webgl .glview{display:block}
@@ -320,7 +322,7 @@ body.ui-glass.glass-gpu .modal.drawer .actions .btn{background:rgba(40,40,44,.72
 body.ui-glass.glass-gpu .modal.drawer .actions .btn.btn-solid{background:rgba(255,255,255,.92)}
 body.ui-glass.glass-gpu .modal.drawer .fxsec{background:rgba(255,255,255,.05);border-color:transparent}
 body.ui-glass .fxsec{background:rgba(255,255,255,.035);border-color:rgba(255,255,255,.09)}
-body.ui-glass .fps.lg,body.ui-glass .xpill.lg{background:transparent}
+body.ui-glass .xpill.lg{background:transparent}
 
 /* ---- a switch with a sliding thumb (js/seg-thumb.js): the chosen segment's white pill is one element that slides,
    lifts into glass while pressed and can be dragged; the buttons themselves have no background any more ---- */
@@ -464,6 +466,143 @@ body.ui-glass .tip{background:rgba(56,56,62,.42);-webkit-backdrop-filter:blur(24
 .more:focus-visible{outline:2px solid var(--fg);outline-offset:2px}
 body.ui-glass .tbar.lg:hover{background:transparent}
 body.ui-glass .tbar.lg .play{background:rgba(255,255,255,.9);color:#000}
+/* ---- AM 布局 (coverLayout, frame.js): the bar is taken out of the bottom of the window and laid out under the cover,
+   as wide as the cover: the progress line, the time gone by and still to come under its two ends, then the buttons.
+   No glass and no pill there: plain signs on the background. It stays when the pointer rests, being part of the
+   picture. --am-x / --am-y / --am-w come from updateCoverPanel. */
+.amtime{display:none}
+body.am .bottom{position:fixed;left:var(--am-x,0);top:var(--am-y,0);width:var(--am-w,300px);padding:0;gap:6px;z-index:2}
+body.am.idle .bottom{opacity:1}
+body.am .meta{visibility:hidden}
+body.am .bottom .tbar,body.am.ui-glass .bottom .tbar.lg{display:grid;grid-template-columns:1fr auto auto auto 1fr;grid-template-areas:"bar bar bar bar bar" "tl tl . tr tr" "shuf prev play next rep";
+  align-items:center;gap:2px 18px;padding:0;border:0;border-radius:0;background:none}
+body.am .tbar .bar{grid-area:bar;min-width:0;margin:0}
+body.am .tbar #time{display:none}
+body.am .tbar .amtime{display:block;font-size:11px;margin:0;opacity:.8}
+body.am .tbar #timeL{grid-area:tl;justify-self:start}
+body.am .tbar #timeR{grid-area:tr;justify-self:end}
+body.am .tbar #prevBtn{grid-area:prev}
+body.am .tbar #nextBtn{grid-area:next}
+/* play and skip as Apple Music draws them (.amico, index.html): rounded signs, two triangles for back and on. Each
+   is a round button larger than its sign; pressed, a disc of light comes up behind it and the sign gives a little,
+   then springs back */
+.amico{display:none}
+body.am .tbar .play svg:not(.amico),body.am .tbar .skip svg:not(.amico){display:none}
+body.am .tbar .amico{display:block;fill:currentColor;stroke:currentColor;stroke-width:1.9;stroke-linejoin:round}
+body.am #play[aria-label="暂停"] .pl,body.am #play:not([aria-label="暂停"]) .pa{display:none}
+body.am .amico .pa{stroke:none}
+body.am .tbar .play,body.am.ui-glass .tbar.lg .play,body.am .tbar .skip{width:64px;height:64px;border-radius:50%;background:rgba(255,255,255,0);color:#fff;opacity:1;
+  transition:background-color .3s ease,transform .35s cubic-bezier(.3,1.7,.5,1)}
+body.am .tbar .play{grid-area:play}
+body.am .tbar .skip{width:58px;height:58px}
+body.am .tbar .play:hover,body.am.ui-glass .tbar.lg .play:hover,body.am .tbar .skip:hover{background:rgba(255,255,255,.1)}
+body.am .tbar .play:active,body.am.ui-glass .tbar.lg .play:active,body.am .tbar .skip:active{background:rgba(255,255,255,.22);transform:scale(.86);transition-duration:.09s,.09s}
+body.am .tbar .play .amico{width:40px;height:40px}
+body.am .tbar .skip .amico{width:38px;height:38px}
+/* the buttons Apple Music has and this player has (mostly) no use for: all there, see js/ui/am.js. In the bar: shuffle
+   and repeat at the two ends of the row, favourite and "more" up beside the title (--am-up: how far above the bar) */
+.amonly,.amui{display:none}
+/* switching the AM layout on or off (setAM, ui-effects.js). The parts both layouts have are named for the time of the
+   change, so that each travels from where it was to where it will be instead of fading in place */
+body.vt-am #covArt{view-transition-name:am-cover}
+body.vt-am #covTi{view-transition-name:am-title}
+body.vt-am #covAr{view-transition-name:am-artist}
+::view-transition-group(am-cover),::view-transition-group(am-title),::view-transition-group(am-artist){
+  animation-duration:.7s;animation-timing-function:cubic-bezier(.3,.05,.12,1)}
+/* the bar at the bottom of the window: out of the window downwards before the AM layout is set out, and up from
+   below it when the AM layout is left (setAM). Never into, or out of, the AM layout's own controls. */
+body.am-barout .bottom{transform:translateY(calc(100% + 48px));transition:transform .3s cubic-bezier(.45,0,.9,.55),opacity .6s var(--ease)}
+body.am-barin0 .bottom{transform:translateY(calc(100% + 48px))}
+body.am-barin .bottom{transition:transform .55s cubic-bezier(.2,.95,.3,1.06),opacity .6s var(--ease)}
+/* the AM layout's progress line comes out of its own left end, where it lies, with a little overshoot */
+@keyframes amBarIn{from{transform:scaleX(0);opacity:.3}}
+body.am .tbar .bar{transform-origin:0 50%;animation:amBarIn .62s cubic-bezier(.22,1.2,.36,1) .1s backwards}
+::view-transition-old(root),::view-transition-new(root){animation-duration:.55s;animation-timing-function:ease}
+/* what only the AM layout has comes up a moment later, one after another: the buttons beside the title and at the
+   two ends of the row, the times, then the corners of the window */
+@keyframes amIn{from{opacity:0;transform:scale(.55)}}       /* to what each of them is at rest (some are dimmer than others) */
+@keyframes amFade{from{opacity:0}}
+body.am .tbar .skip,body.am .amtog,body.am #amStar,body.am .tbar .play,body.am .tbar .more{animation:amIn .5s cubic-bezier(.3,1.5,.5,1) .28s backwards}
+body.am .tbar .play{animation-delay:.14s}
+body.am .tbar .more{animation-delay:.4s}
+body.am .tbar #prevBtn,body.am .tbar #nextBtn{animation-delay:.2s}
+body.am #amStar{animation-delay:.36s}
+body.am .tbar .amtime{animation:amFade .5s ease .3s backwards}
+body.am .amui .amx,body.am .amvol,body.am .ampill{animation:amIn .55s cubic-bezier(.3,1.4,.5,1) .4s backwards}
+body.am .amvol{animation-delay:.47s}
+body.am .ampill{animation-delay:.54s}
+@media (prefers-reduced-motion:reduce){body.am .tbar .bar,body.am .tbar .play,body.am .tbar .more,body.am .tbar .skip,body.am .amtog,body.am #amStar,body.am .tbar .amtime,body.am .amui .amx,body.am .amvol,body.am .ampill{animation:none}}
+body.am .amonly{all:unset;cursor:pointer;display:grid;place-items:center;width:34px;height:34px;border-radius:50%;color:#fff;opacity:.75}
+body.am .amonly:hover{opacity:1;background:rgba(255,255,255,.12)}
+body.am .amonly svg,.amui svg{width:20px;height:20px;fill:currentColor}
+.amui svg .ln,body.am .amonly svg .ln{fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+body.am #amShuffle{grid-area:shuf;justify-self:start}
+body.am #amRepeat{grid-area:rep;justify-self:end}
+/* shuffle and repeat as Apple Music draws them: soft, thick, rounded lines, a little dimmer than the other signs. Each
+   is a switch: on, it stands on a pale disc and is fully white (.amtog, js/ui/am.js; nothing is switched by it yet) */
+body.am .amtog{width:36px;height:36px;opacity:.62;transition:background-color .25s ease,opacity .25s ease,transform .3s cubic-bezier(.3,1.7,.5,1)}
+body.am .amtog svg{width:23px;height:23px}
+body.am .amtog svg .ln{stroke-width:2.5}
+body.am .amtog:hover{opacity:.9;background:rgba(255,255,255,.1)}
+body.am .amtog[aria-pressed="true"]{opacity:1;background:rgba(255,255,255,.22)}
+body.am .amtog:active{transform:scale(.86);transition-duration:.09s}
+/* favourite and "more", beside the title: two small pale discs, as in Apple Music. The star is drawn with rounded
+   points; an outline until it is switched on, then filled. The three dots are a little dimmer than the star. */
+body.am .tbar .more,body.am #amStar{position:absolute;right:0;top:calc(-1 * var(--am-up,60px) - 5px);width:30px;height:30px;border-radius:50%;background:rgba(255,255,255,.17);opacity:1;
+  transition:background-color .25s ease,transform .3s cubic-bezier(.3,1.7,.5,1)}
+body.am #amStar{right:39px}
+body.am .tbar .more:hover,body.am .tbar .more[aria-expanded="true"],body.am #amStar:hover{background:rgba(255,255,255,.28)}
+body.am .tbar .more:active,body.am #amStar:active{transform:scale(.86);transition-duration:.09s}
+body.am .tbar .more{color:rgba(255,255,255,.78)}
+body.am .tbar .more svg{width:23px;height:23px}
+body.am #amStar svg{width:22px;height:22px}
+body.am #amStar .st{fill:none;stroke:currentColor;stroke-width:1.7;stroke-linejoin:round}
+body.am #amStar[aria-pressed="true"] .st{fill:currentColor}
+body.am .tbar .skip[hidden]{display:grid!important;opacity:.35;pointer-events:none}      /* not following a player: nothing to skip to, but they keep their place */
+body.am .top{visibility:hidden}                 /* the volume is where the language switch was: 文A at the bottom right goes round the languages */
+body.am .amui{display:block}
+.amui{transition:opacity .6s var(--ease)}
+body.idle .amui{opacity:0}
+.amui button{all:unset;cursor:pointer;display:grid;place-items:center;color:#fff}
+.amui button:focus-visible,body.am .amonly:focus-visible{outline:2px solid #fff;outline-offset:2px}
+.amui .amb{position:fixed;z-index:3;width:30px;height:30px;border-radius:50%;background:rgba(255,255,255,.2)}
+.amui .amb:hover{background:rgba(255,255,255,.32)}
+.amui .amx{left:12px;top:12px}
+.amui .amx svg{width:16px;height:16px}
+body.desktop .amui .amx{top:32px}
+.amvol{position:fixed;z-index:3;right:14px;top:12px;height:30px;display:flex;align-items:center;gap:8px;padding:0 10px;border-radius:999px;background:rgba(255,255,255,.14);box-shadow:inset 0 0 0 1px rgba(255,255,255,.12)}
+body.desktop .amvol{top:32px}
+.amvol button{width:22px;height:22px;opacity:.9}
+.amvol svg{width:18px;height:18px}
+.amvol #amMute.off .wave{display:none}
+.amvol input[type=range]{width:120px;height:16px}
+.amvol input[type=range]::-webkit-slider-runnable-track{height:5px;border-radius:3px;background:linear-gradient(#fff,#fff) 0/var(--p,100%) 100% no-repeat,rgba(255,255,255,.28)}
+.amvol input[type=range]::-webkit-slider-thumb{width:13px;height:13px;margin-top:-4px;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.4)}
+.amvol input[type=range]::-moz-range-track{height:5px;border-radius:3px;background:rgba(255,255,255,.28)}
+.amvol input[type=range]::-moz-range-progress{height:5px;border-radius:3px;background:#fff}
+/* bottom right, as in Apple Music: the two lyric buttons are pale discs with dark signs, side by side on one pill of
+   frosted glass (what is behind it shows through, blurred) */
+.amfabs{position:fixed;z-index:3;right:16px;bottom:14px;display:flex;align-items:center;gap:10px}
+.amui .amfabs .amb{position:static}
+.ampill{display:flex;gap:6px;padding:5px;border-radius:999px;background:rgba(255,255,255,.16);box-shadow:inset 0 0 0 1px rgba(255,255,255,.14),0 2px 10px rgba(0,0,0,.18);
+  -webkit-backdrop-filter:blur(22px) saturate(1.6);backdrop-filter:blur(22px) saturate(1.6)}
+.amui .ampill .amb{width:32px;height:32px;background:rgba(255,255,255,.72);color:rgba(0,0,0,.62);transition:background-color .25s ease,transform .3s cubic-bezier(.3,1.7,.5,1)}
+.amui .ampill .amb:hover{background:rgba(255,255,255,.88)}
+.amui .ampill .amb:active{background:#fff;transform:scale(.88);transition-duration:.09s,.09s}
+.amui .ampill svg{width:19px;height:19px}
+.amui .ampill .amb[aria-pressed="false"]{background:rgba(255,255,255,.2);color:#fff}      /* the lyrics are switched off */
+.amui .ampill .amb[aria-pressed="false"]:hover{background:rgba(255,255,255,.34)}
+.amfabs text{font-family:var(--zh)}
+body.am #seek{height:20px}
+body.am #seek::-webkit-slider-runnable-track{height:9px;border-radius:4.5px;background:linear-gradient(#fff,#fff) 0/var(--p,0%) 100% no-repeat,rgba(255,255,255,.28)}
+body.am #seek::-moz-range-track{height:9px;border-radius:4.5px;background:rgba(255,255,255,.28)}
+body.am #seek::-moz-range-progress{height:9px;border-radius:4.5px;background:#fff}
+body.am #seek::-webkit-slider-thumb{width:9px;height:9px;margin-top:0;background:transparent}
+body.am #seek::-moz-range-thumb{width:9px;height:9px;background:transparent}
+body.am .status{padding:0;font-size:11px}
+/* the menu opens to the right of its button (beside the title, at the cover's right edge), in the space between the
+   cover and the lyrics: its foot level with the button's, growing upwards, and from that corner */
+body.am .menu{right:auto;left:calc(100% + 12px);bottom:calc(100% + var(--am-up,60px) - 25px);max-height:calc(var(--am-y,100vh) - var(--am-up,60px) + 13px);transform-origin:0 100%}
 .status{display:block;padding:0 14px;min-height:1.4em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:opacity .8s var(--ease)}
 .status.quiet{opacity:0}
 .menu{position:absolute;right:0;bottom:calc(100% + 10px);z-index:8;width:min(290px,calc(100vw - 24px));max-height:calc(100vh - 110px);overflow:auto;box-sizing:border-box;

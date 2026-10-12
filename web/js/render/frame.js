@@ -3,7 +3,7 @@ import { $, mode, song } from '../core/lyrics.js';
 import { exitTotal, fx, lt, lyricDelay, now } from '../core/settings.js';
 import { oneLine } from './view-dom.js';
 import { buildTimeline, canvasMeasurer, clamp01, drawSeg, easeOut, setDrawOnColour, setSpriteAlphaMul } from './text-canvas.js';
-import { coverHi, coverURL, drawFlowBg, exportDith, exportProf, flowPalette } from '../background/background.js';
+import { coverHi, coverURL, drawFlowBg, exportDith, exportProf, flowPalette, setLiveGLLast } from '../background/background.js';
 import { coverVideo } from '../background/cover-extract.js';
 import { bloomOpts, exportBloomGL, useWebGL } from './bloom.js';
 import { bloomTL, drawScroll, drawScrollOne, scrollAnchor, scrollE, setBloomTL, songStage, useScroll } from './layout-scroll.js';
@@ -14,6 +14,7 @@ export {
   fitText,
   layoutChange,
   setCoverPanelDirty,
+  useAM,
   useCoverPanel,
 };
 
@@ -34,7 +35,38 @@ function sheetHeight(){
   if (m.hidden || m.classList.contains('closing') || m.classList.contains('prewarm') || !matchMedia('(max-width:760px)').matches) return 0;
   return Math.min(innerHeight * 0.6, m.offsetHeight + 20);
 }
+/* AM 布局 (a switch in the settings, fx.am): the cover panel set out like the full-screen player of Apple Music. The
+   cover is further left and a little smaller, the title and artist under it are small, and below them is room for
+   the controls, which the live page moves there from the bottom of the window (ctrl: where, in the frame's px;
+   style.css body.am). The lyrics start just right of the middle and the line being sung stands higher (anchor).
+   For wide frames, with any of the three lyric layouts: the scrolling column, or one line / one word at a time in the
+   middle of the lyrics' half. A tall frame keeps the usual layout. */
+const useAM = () => !!fx.am && !!fx.cover;
+/* AM 布局, the lyrics button (bottom right, fx.amLyrics): with the lyrics switched off the cover and everything under
+   it go to the middle of the frame and grow a little, and the lyrics fade away to the right; switched on again, all
+   of it comes back. amHideNow: how far along that is, 0 = lyrics shown ... 1 = hidden. It glides for dur seconds,
+   slow at both ends, and from wherever it is when the button is pressed again half way. Everything that has a place
+   in the layout is worked out from this one number (coverLayout), so nothing can get out of step. The export has no
+   glide: it draws the state that is set. */
+const AM_HIDE = { dur: 0.8, grow: [0.34, 0.56], drift: 0.05 };     // seconds; the cover's size in the middle (of W, of H); how far the lyrics drift (of W)
+let amHide = null;
+function amHideNow(){
+  const to = fx.amLyrics === false ? 1 : 0, ms = performance.now();
+  if (!amHide || (typeof late.exporting !== 'undefined' && late.exporting) || matchMedia('(prefers-reduced-motion:reduce)').matches) amHide = { from: to, to, at: 0, k: to };
+  if (to !== amHide.to) amHide = { from: amHide.k, to, at: ms, k: amHide.k };
+  const p = amHide.at ? clamp01((ms - amHide.at) / 1000 / AM_HIDE.dur) : 1;
+  const e = p < 0.5 ? 4 * p * p * p : 1 - Math.pow(2 - 2 * p, 3) / 2;
+  return amHide.k = amHide.from + (amHide.to - amHide.from) * e;
+}
 function coverLayout(W, H){
+  if (W >= H * 1.05 && useAM()){
+    const k = amHideNow(), s0 = Math.min(W * 0.28, H * 0.5), s = s0 + (Math.min(W * AM_HIDE.grow[0], H * AM_HIDE.grow[1]) - s0) * k;
+    const tfs = Math.max(13, s * 0.032), afs = Math.max(12, s * 0.028), gap = s * 0.055;
+    const ch = Math.max(104, s * 0.2), text = tfs * 1.35 + afs * 1.4;      // ch: the height kept for the controls
+    const bh = s + gap + text + s * 0.04 + ch, x = W * 0.11 + ((W - s) / 2 - W * 0.11) * k, y = (H - bh) / 2;
+    return { am: true, hide: k, s, x, y, r: s * 0.012, tx: x, ty: y + s + gap, tfs, afs, tw: s - 84, ctrl: { x, y: y + s + gap + text + s * 0.04, w: s, h: ch },      // tw: the favourite and "more" buttons stand right of the title
+             region: { x: W * 0.492, y: 0, w: W * 0.47, h: H, anchor: 0.27, hide: k >= 0.999 } };
+  }
   if (W >= H * 1.05){
     const s = Math.min(W * 0.3, H * 0.52), tfs = s * 0.075, afs = s * 0.062, gap = s * 0.075;
     const bh = s + gap + tfs * 1.35 + afs * 1.4, x = W * 0.25 - s / 2, y = (H - bh) / 2;
@@ -120,16 +152,33 @@ function coverSlide(el, on){
     coverAwayT = setTimeout(() => { el.hidden = true; }, COVER_AWAY * 1000);
   }
 }
+/* the lyrics while the lyrics button's glide is under way: the canvas they are drawn on fades and drifts to the right
+   as a whole (once they are gone they are no longer drawn at all, drawFrameIn) */
+let amLookK = 0;
+function amLyricsLook(k){
+  if (k === amLookK) return;
+  amLookK = k;
+  const gv = $('glView');
+  gv.style.opacity = k > 0 ? String(1 - k) : '';
+  gv.style.transform = k > 0 ? `translateX(${(k * AM_HIDE.drift * innerWidth).toFixed(1)}px)` : '';
+  setLiveGLLast('');                                // the picture changes with it
+}
 function updateCoverPanel(){
   const el = $('coverPanel');
   document.body.classList.toggle('cover-on', useCoverPanel());      // style.css: the header's own title steps aside in portrait
-  if (!useCoverPanel()){ coverSlide(el, false); coverPanelKey = ''; if (coverVideo && !coverVideo.paused) coverVideo.pause(); return; }
+  if (!useCoverPanel()){ coverSlide(el, false); coverPanelKey = ''; document.body.classList.remove('am'); amLyricsLook(0); if (coverVideo && !coverVideo.paused) coverVideo.pause(); return; }
   if (coverVideo && coverVideo.paused && coverVideo.isConnected) coverVideo.play().catch(() => {});      // a moving cover plays while the panel shows
-  const r = liveRect();
-  const key = [r.left, r.top, r.width, r.height, coverTitle(), coverArtist(), coverURL].join('|');
+  const r = liveRect(), L = coverLayout(r.width, r.height);
+  const key = [r.left, r.top, r.width, r.height, coverTitle(), coverArtist(), coverURL, !!L.am, L.am ? L.hide.toFixed(4) : 0].join('|');
+  amLyricsLook(L.am ? L.hide : 0);
   if (!coverPanelDirty && key === coverPanelKey) return;
   coverPanelDirty = false; coverPanelKey = key;
-  const L = coverLayout(r.width, r.height);
+  // AM 布局: the controls go under the cover (style.css body.am puts the bottom bar where these say)
+  document.body.classList.toggle('am', !!L.am);
+  if (L.am){
+    const st = document.documentElement.style;
+    st.setProperty('--am-x', r.left + L.ctrl.x + 'px'); st.setProperty('--am-y', r.top + L.ctrl.y + 'px'); st.setProperty('--am-w', L.ctrl.w + 'px'); st.setProperty('--am-up', (L.ctrl.y - L.ty) + 'px');
+  }
   Object.assign(el.style, { left: r.left + L.x + 'px', top: r.top + L.y + 'px' });
   el.style.setProperty('--away', -(r.left + Math.max(L.x + L.s * 1.2, L.tx + L.tw + 8)) + 'px');      // how far left is outside the window: shadow, title and all
   coverSlide(el, true);
@@ -159,8 +208,8 @@ function updateCoverPanel(){
   }
 }
 /* a measurer and timeline for the lyrics area next to the cover (narrower, so lines wrap for it) */
-function regionM(M, rw, rh, portrait){
-  const key = rw + 'x' + rh + fx.layout + !!portrait + fx.font.main.s + fx.font.sub.s;
+function regionM(M, rw, rh, portrait, anchor){
+  const key = rw + 'x' + rh + fx.layout + !!portrait + fx.font.main.s + fx.font.sub.s + (anchor || '');
   if (!M._reg || M._reg.key !== key){
     // the scrolling column wraps itself, so it keeps the full type size; one centred line is sized to the area
     // portrait: the page's CSS size (5.4 % of the width, at most 72 px) is small for a tall window; the export's size for
@@ -170,6 +219,7 @@ function regionM(M, rw, rh, portrait){
     const Mr = canvasMeasurer(M.ctx, rw, rh, fs, true);
     if (M._probe){ Mr.sprites = M.sprites; Mr._probe = true; }
     Mr._x0 = portrait ? 0.07 : 0.04;        // left margin of the scrolling column: lines up with the cover
+    Mr._anc = anchor;                       // AM 布局: how far down the line being sung stands (layout-scroll.js)
     M._reg = { key, Mr };
   }
   const Mr = M._reg.Mr, tkey = [song.lines.length, mode, oneLine].join('|');
@@ -184,7 +234,7 @@ function lyricAnchor(W, H, M){
   if (useCoverPanel()){
     const R = coverLayout(W, H).region;
     ox = Math.round(R.x); oy = Math.round(R.y); W = Math.round(R.w); H = Math.round(R.h);
-    M = regionM(M, W, H, R.portrait);
+    M = regionM(M, W, H, R.portrait, R.anchor);
   }
   const a = useScroll() ? scrollAnchor(M, W, H) : { x: W / 2, y: H * (useWordMode() ? 0.47 : 0.5) };
   return { x: ox + a.x, y: oy + a.y };
@@ -235,7 +285,7 @@ function drawFrame(ctx, W, H, M, segs, t, transparent, noBloom, noCover){
 function drawFrameL(ctx, W, H, M, segs, t, transparent, noBloom, noCover, tr){
   if (useCoverPanel()){
     // background + cover on the frame, then the lyrics drawn inside the area beside it
-    const L = coverLayout(W, H), R = L.region, Mr = regionM(M, Math.round(R.w), Math.round(R.h), R.portrait);
+    const L = coverLayout(W, H), R = L.region, Mr = regionM(M, Math.round(R.w), Math.round(R.h), R.portrait, R.anchor);
     return drawFrameIn(ctx, W, H, M, Mr, Mr._segs, t, transparent, noBloom, noCover ? null : R, R, tr);
   }
   return drawFrameIn(ctx, W, H, M, M, segs, t, transparent, noBloom, null, null, tr);
@@ -249,6 +299,7 @@ function drawFrameIn(ctx, W, H, M0, M, segs, t, transparent, noBloom, coverR, R,
   else if (flow && ctx.canvas){ const p0 = exportProf ? performance.now() : 0; drawFlowBg(ctx, W, H, t + lyricDelay); if (exportProf) exportProf.bg += performance.now() - p0; }      // background follows the audio time
   else { ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H); }
   if (coverR && ctx.canvas) drawCoverPanel(ctx, W, H);
+  if (R && R.hide) return flow ? null : 'amhide';      // AM 布局 with the lyrics switched off: the cover alone
   // WebGL renderer with glow: text goes to its own layer, the GPU adds the bloom, the result is laid on top
   const BG = !noBloom && fx.glow.on && useWebGL() && ctx.canvas ? exportBloomGL() : null;
   let tc = ctx;

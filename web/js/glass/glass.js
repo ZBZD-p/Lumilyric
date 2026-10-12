@@ -31,7 +31,7 @@ export {
      soft glow inside the bezel.
    The controls themselves stay normal page elements (text, clicks), only their background becomes transparent.
    The big panels keep the browser's own frosted blur (also GPU). */
-const GLASS_SEL = '.top .seg, .bottom .tbar, .xpill, .fps';      // the bar is one piece of glass; what sits on it is not
+const GLASS_SEL = 'body:not(.am) .top .seg, body:not(.am) .bottom .tbar, .xpill';      // AM 布局: the controls lie under the cover, on nothing, and the header is hidden      // the bar is one piece of glass; what sits on it is not
 const GLASS_MAX = 40;
 /* the settings card (.modal.drawer .panel) as one piece of glass: frosted (text on it must stay readable over any
    cover), a wide soft rim that bends the picture a little, a clear edge light and a deep shadow */

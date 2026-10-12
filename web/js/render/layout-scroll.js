@@ -106,7 +106,7 @@ function scrollOff(items, j, t, anchor, curL){
 }
 function scrollM(M, W, H){
   const M2 = M._scrollM || (M._scrollM = canvasMeasurer(M.ctx, W, H, M.fs * 0.78, true));
-  M2._x0 = M._x0;
+  M2._x0 = M._x0; M2._anc = M._anc;
   if (!M2.sprites) M2.sprites = spriteCache(M2);
   return M2;
 }
@@ -115,7 +115,7 @@ function scrollM(M, W, H){
 function scrollAnchor(M, W, H){
   const M2 = scrollM(M, W, H), S = scrollLayout(M2, W, H);
   const x0 = M2._x0 != null ? W * M2._x0 : (W - S.colW) / 2;
-  return { x: x0 + (M2._x0 != null ? S.maxW : S.colW) * scrollAlignNow(), y: H * SCROLL.anchor };
+  return { x: x0 + (M2._x0 != null ? S.maxW : S.colW) * scrollAlignNow(), y: H * (M2._anc || SCROLL.anchor) };
 }
 /* 对齐: where the rows sit in the column: 0 = every row starts at its left edge, 0.5 = every row is centred on its
    axis, 1 = every row ends at its right edge. There is one setting for the column on its own (centred unless chosen
@@ -146,7 +146,7 @@ function drawScrollOne(ctx, W, H, M, t, shiftFn, fade){
   const M2 = scrollM(M, W, H);
   const SP = M._probe ? M.sprites : M2.sprites, S = scrollLayout(M2, W, H), items = S.items;
   if (!items.length) return 'empty';
-  const fs = M2.fs, sfs = M2.sfs, bs = fs / 72, anchor = H * SCROLL.anchor;
+  const fs = M2.fs, sfs = M2.sfs, bs = fs / 72, anchor = H * (M2._anc || SCROLL.anchor);
   // beside the cover the column starts at the area's left margin and is as wide as a row may be; on its own it is
   // centred in the frame and as wide as its widest row. al: where the rows sit in it (对齐, scrollAlignNow)
   const al = scrollAlignNow(), x0 = M2._x0 != null ? W * M2._x0 : (W - S.colW) / 2, span = M2._x0 != null ? S.maxW : S.colW;
@@ -166,6 +166,12 @@ function drawScrollOne(ctx, W, H, M, t, shiftFn, fade){
   while (first > 0 && base - first < 40 && atRest(first - 1) + items[first - 1].h > -reach) first--;
   while (last < items.length - 1 && last - base < 40 && atRest(last + 1) < H + reach) last++;
   first = Math.max(0, Math.min(first, cur - 4)); last = Math.min(items.length - 1, Math.max(last, base + 8));
+  // a language change: also the lines that are on the screen where they are being moved from or to. A line whose
+  // place in the new language is outside the area is still in sight when the change begins, and glides out
+  if (fade){
+    while (first > 0 && base - first < 60 && atRest(first - 1) + fade.dy(first - 1) + items[first - 1].h > -reach) first--;
+    while (last < items.length - 1 && last - base < 60 && atRest(last + 1) + fade.dy(last + 1) < H + reach) last++;
+  }
   for (let j = first; j <= last; j++){
     const it = items[j], dyj = shiftFn ? shiftFn(j, first) : fade ? fade.dy(j) : 0, off = offFor(j), top = it.y + off + dyj;
     const aPri = fade ? (fade.same(j) ? fade.priSame : fade.alpha) : 1, aSub = fade ? fade.alpha : 1;
@@ -193,7 +199,7 @@ function drawScrollOne(ctx, W, H, M, t, shiftFn, fade){
     const swc = it.kar && act > 0 ? sweepPos(it.kar, SWo.offs, SWo.ws, SE, t) : 0;
     if (it.kar && act > 0 && sweepActive(it.kar, t)) moving = true;
     for (const row of it.rows){
-      const ea = Math.max(act, edge(ry - dyj));
+      const ea = Math.max(act, edge(fade ? ry : ry - dyj));      // a language change: by where the row is now, so that it melts away as it reaches the edge
       setSpriteAlphaMul(aPri * ea);
       if (aPri * ea <= 0){ ry += S.lineH; continue; }
       const rx = rowX(row.width);
@@ -226,7 +232,7 @@ function drawScrollOne(ctx, W, H, M, t, shiftFn, fade){
       ry = top + it.rows.length * S.lineH + S.lineH / 2;
       ry += sfs * 0.45 - S.lineH / 2 + S.subH / 2;
       const subA = 0.24 + 0.36 * act;
-      it.subRows.forEach((r, n) => { setSpriteAlphaMul(aSub * Math.max(act, edge(ry - dyj))); SP.draw(ctx, r, true, rowX(it.subWs[n]), ry, subA, blur); ry += S.subH; });
+      it.subRows.forEach((r, n) => { setSpriteAlphaMul(aSub * Math.max(act, edge(fade ? ry : ry - dyj))); SP.draw(ctx, r, true, rowX(it.subWs[n]), ry, subA, blur); ry += S.subH; });
     }
     setSpriteAlphaMul(1);
     ctx.restore();
@@ -252,7 +258,7 @@ function drawModeFade(ctx, W, H, M, t){
   const p = (performance.now() - modeFade.at) / 1000 / MODE_FADE;
   if (p >= 1 || songStage.phase !== 'show'){ modeFade = null; return false; }
   const e = scrollE(p), a = p * p * (3 - 2 * p), now = mode, old = modeFade.from;
-  const M2 = scrollM(M, W, H), anchor = H * SCROLL.anchor;
+  const M2 = scrollM(M, W, H), anchor = H * (M2._anc || SCROLL.anchor);
   const lay = m => { assignMode(m); try { return scrollLayout(M2, W, H).items; } finally { assignMode(now); } };
   const iOld = lay(old), iNew = lay(now);
   if (!iNew.length || iOld.length !== iNew.length){ modeFade = null; return false; }

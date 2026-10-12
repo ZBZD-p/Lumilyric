@@ -463,6 +463,7 @@ const stage = $('stage');
 let song = parseLRC(SAMPLE);
 let mode = 'both';
 try { mode = localStorage.getItem('lrc-mode') || 'both'; } catch(e){}
+if (mode !== 'en') mode = 'both';             // the switch offers English and both; a saved 中文 (no longer offered) shows both
 let audio = null, playing = false, base = 0, startPerf = 0, cur = null;
 
 function setBase(v){ return base = v; }   // other modules cannot assign to an imported binding

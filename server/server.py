@@ -18,7 +18,11 @@ API (JSON):
   POST /api/nowplaying/lyrics {trackId}    -> {lrc, source, title, verbatim, score} or {lrc: null, reason}
   POST /api/nowplaying/cover/save?track=&side=  raw image body: keep the sharp cover chosen for this song
   POST /api/nowplaying/calibrate {app, trackId, position}  -> {ok}  (players that give no position: Kugou)
-  POST /api/nowplaying/control {action: play|pause|next|prev|seek, position?, app?}  -> {ok, reason?}
+  POST /api/nowplaying/control {action: play|pause|next|prev|seek|playAt|removeAt|openAt|mode, position?, app?}
+                              -> {ok, reason?}   (QQ 网页跟随 only: playAt / removeAt / openAt, position = the list
+                              index; mode, position = list | single | random | order)
+  GET  /api/nowplaying/queue?app=     the play list {ok, mode, items: [{title, artist, album, cover, dur, now, vip}]}
+                                      (QQ 网页跟随 only)
 """
 import faulthandler, json, os, re, shutil, subprocess, sys, threading, time, traceback, uuid, zipfile
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
@@ -145,7 +149,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def log_message(self, fmt, *args):
         req = args[0] if args else ""
-        if "/api/" in req and "/api/nowplaying " not in req and "/api/nowplaying?" not in req and "/api/nowplaying/bass" not in req                 and "/api/nowplaying/stream" not in req:     # the poll fires ~7 times a second
+        if "/api/" in req and "/api/nowplaying " not in req and "/api/nowplaying?" not in req and "/api/nowplaying/bass" not in req                 and "/api/nowplaying/stream" not in req and "/api/nowplaying/queue" not in req:     # the poll fires ~7 times a second
             sys.stdout.write("%s  %s\n" % (time.strftime("%H:%M:%S"), fmt % args))
 
     def send(self, code, body, ctype="application/json; charset=utf-8"):
@@ -227,6 +231,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(200, {"ok": False, "reason": f"{type(e).__name__}: {e}"[:200]})
         if path == "/api/nowplaying/stream":           # server push (SSE): song state when it changes, bass level as it arrives
             return self.stream((parse_qs(urlparse(self.path).query).get("app") or [""])[0])
+        if path == "/api/nowplaying/queue":            # the followed player's play list (QQ 网页跟随 only), for the AM layout
+            try:
+                return self.send(200, NP.queue((parse_qs(urlparse(self.path).query).get("app") or [""])[0]))
+            except Exception as e:
+                return self.send(200, {"ok": False, "reason": f"{type(e).__name__}: {e}"[:200]})
         if path == "/api/nowplaying/bass":             # live low-frequency level of the system sound, for the pulse
             if not AUD.available():
                 return self.send(200, {"ok": False, "reason": "没有安装声音采集组件，运行 scripts\\setup_nowplaying.bat 后重启"})

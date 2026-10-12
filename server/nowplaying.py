@@ -27,7 +27,12 @@ import time
 import push
 import lyrics_match as LM
 import disk_cache as DC
+import qqweb
 from track_state import PlayerState
+
+# QQ 网页跟随: the embedded QQ web player (desktop only) is fed in as if it were a player, so lyrics, position,
+# cover and the draggable progress bar all reuse the normal follow path. Its control goes to injected clicks.
+EXT_APP = "qqweb.web"
 
 MOCK = bool(os.environ.get("LRC_NOWPLAYING_MOCK"))
 MOCK_STALE = bool(os.environ.get("LRC_NOWPLAYING_MOCK_STALE"))
@@ -68,6 +73,70 @@ _LOOP = None
 _STARTED = False
 _REASON = ""
 _mock = {"elapsed": 0.0, "playing": True, "t": time.time(), "n": 0, "change_at": 0.0}
+_EXT = None                           # latest raw snapshot of the embedded QQ web player, or None
+
+
+def feed_external(raw):
+    """The desktop QQ-web reader pushes the current song here; the reader loop merges it in like a real player.
+    A real change (song, play state, a new position anchor) is also applied and pushed to the page at once, so a
+    pause does not wait for the reader loop's next round."""
+    global _EXT
+    with _LOCK:
+        old = _EXT
+        _EXT = dict(raw) if raw else None
+        changed = bool(raw) and (old is None or any(old.get(k) != raw.get(k) for k in ("tid", "playing", "pos0", "lu", "dur")))
+        known = bool(raw) and raw["app"] in _ORDER
+    if changed and known:
+        _feed(dict(raw), time.time())
+        _changed()
+
+
+def clear_external():
+    global _EXT
+    with _LOCK:
+        _EXT = None
+
+
+_EXT_QUEUE = {"items": [], "mode": "", "ver": 0}      # the embedded QQ web player's play list, as its page shows it
+
+
+def set_external_queue(items, mode=""):
+    """The desktop reader: the QQ web player's list [{title, artist, album, cover, dur, now, vip}] and its play mode
+    (list / single / random / order). Only kept when it changed."""
+    with _LOCK:
+        if items != _EXT_QUEUE["items"] or mode != _EXT_QUEUE["mode"]:
+            _EXT_QUEUE["items"], _EXT_QUEUE["mode"] = list(items), mode
+            _EXT_QUEUE["ver"] += 1
+
+
+def queue(app=""):
+    """The play list of the player followed, for the AM layout's list. Only the QQ web window has one to give: the
+    system's media session (every other player) tells what plays, not what comes next."""
+    _refresh()                            # (the reader runs once anything has been asked)
+    with _LOCK:
+        m, _ = _pick(app)
+        if not m:
+            return {"ok": False, "reason": "没有在跟随播放器"}
+        if m["app"] != EXT_APP:
+            return {"ok": False, "reason": f"{m['appName'] or '这个播放器'}没有把播放列表交给系统，只有「QQ 网页跟随」能读到列表"}
+        return {"ok": True, "app": EXT_APP, "ver": _EXT_QUEUE["ver"], "mode": _EXT_QUEUE["mode"],
+                "items": list(_EXT_QUEUE["items"])}
+
+
+def has_cover(tid):
+    with _LOCK:
+        return tid in _COVERS
+
+
+def set_external_cover(tid, data, mime):
+    """The embedded QQ web player's picture of song `tid` (read off its page, fetched at 800 px by the desktop app):
+    served as the player's own cover, like a system thumbnail."""
+    with _LOCK:
+        if len(_COVERS) > 20 and tid not in _COVERS:
+            _COVERS.pop(next(iter(_COVERS)))
+        _COVERS[tid] = (data, mime)
+        _COVER_VER[tid] = _COVER_VER.get(tid, 0) + 1
+    push.notify("np")                     # a picture that came after the song: the page sees the new coverVer
 
 
 def available():
@@ -82,6 +151,8 @@ def available():
 
 
 def app_info(app):
+    if (app or "") == EXT_APP:
+        return "QQ音乐（网页）", "QQ音乐"           # lyrics searched on QQ, same as the desktop QQ Music
     low = (app or "").lower()
     for key, name, src in KNOWN_APPS:
         if key in low:
@@ -95,6 +166,8 @@ def is_browser(app):
 
 
 def is_music_app(app):
+    if (app or "") == EXT_APP:
+        return True
     low = (app or "").lower()
     return any(key in low for key, _, _ in KNOWN_APPS)
 
@@ -305,6 +378,12 @@ async def _poll():
                 order.append(raw["app"])
                 objs[raw["app"]] = s
             with _LOCK:
+                ext = dict(_EXT) if _EXT else None
+            if ext:                                       # the embedded QQ web player, kept alive each cycle
+                _feed(ext, time.time())
+                order.append(ext["app"])
+                objs[ext["app"]] = "EXTERNAL"
+            with _LOCK:
                 _ORDER[:] = order
                 _CUR = (cur.source_app_user_model_id or "") if cur else ""
                 _OBJS.clear()
@@ -364,7 +443,9 @@ def _pick(app):
     if not metas:
         return None, metas
     order = {m["app"]: i for i, m in enumerate(metas)}
-    best = min(metas, key=lambda m: (not is_music_app(m["app"]), not m["playing"], m["app"] != _CUR, order[m["app"]]))
+    # the embedded QQ web player, when open, is what the user turned on to follow: prefer it over other players
+    best = min(metas, key=lambda m: (m["app"] != EXT_APP, not is_music_app(m["app"]), not m["playing"],
+                                     m["app"] != _CUR, order[m["app"]]))
     return best, metas
 
 
@@ -510,7 +591,7 @@ async def _control(s_obj, action, position):
 
 
 def control(action, position=None, app=""):
-    if action not in ("play", "pause", "next", "prev", "seek"):
+    if action not in ("play", "pause", "next", "prev", "seek", "playAt", "removeAt", "openAt", "mode"):
         return {"ok": False, "reason": "不认识的操作"}
     if MOCK:
         _mock_tick()
@@ -533,8 +614,19 @@ def control(action, position=None, app=""):
     with _LOCK:
         m, _ = _pick(app)
         obj = _OBJS.get(m["app"]) if m else None
+        dur = _PLAYERS[m["app"]].raw.get("dur") if m and m["app"] in _PLAYERS else 0
     if obj is None:
         return {"ok": False, "reason": "没有可控制的播放器"}
+    if obj == "EXTERNAL":                                  # the embedded QQ web player: inject clicks, not WinRT
+        if action in ("playAt", "removeAt", "openAt"):        # a song of its list (position: which one)
+            return qqweb.row(action[:-2], position)
+        if action == "mode":                                   # its play mode (position: list / single / random / order)
+            return qqweb.mode(position)
+        if action == "seek":
+            if not dur:
+                return {"ok": False, "reason": "时长未知"}
+            return qqweb.seek(float(position) / float(dur))
+        return qqweb.control(action)
     try:
         ok = asyncio.run_coroutine_threadsafe(_control(obj, action, position), _LOOP).result(4)
     except Exception as e:

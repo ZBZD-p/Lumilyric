@@ -77,7 +77,17 @@ function followSeek(t){
    thing the keyboard's media keys reach). What the player then does comes back like any other change. */
 function followControl(action){
   if (!followOn || !followInfo) return;
-  if (action === 'pause') pauseAsked = performance.now() + 1500;      // pressed here: shown at once (see pauseT)
+  if (action === 'pause' || action === 'play'){
+    // pressed here: the lyrics stop (or go on) from where they are now, not once the player's answer has come back.
+    // Snapshots the player sends before it has caught up are passed over (pauseAsked / playAsked, followApply).
+    const on = action === 'play', t = followNow();
+    F = { ...F, pos: t, at: Date.now(), playing: on };
+    followCorr = 0;
+    pauseAsked = on ? 0 : performance.now() + 1500;
+    playAsked = on ? performance.now() + 1500 : 0;
+    clearTimeout(pauseT); pauseT = 0;
+    assignPlaying(on); setPlayIcon(on); late.poke();
+  }
   api('/api/nowplaying/control', JSON.stringify({ action, app: followInfo.app }), { 'Content-Type': 'application/json' })
     .then(txt => { const r = JSON.parse(txt); if (!r.ok) $('status').textContent = (followInfo.appName || '播放器') + ' 没有执行这个操作' + (r.reason ? '：' + r.reason : ''); })
     .catch(e => { $('status').textContent = '控制播放器失败：' + e.message; });
@@ -89,7 +99,7 @@ $('nextBtn').onclick = () => followControl('next');
    an instant between the two, and the button would flash to "play" and back. A pause asked for with the page's own
    button (pauseAsked) is shown at once; "playing" always is. */
 const PAUSE_HOLD = 450;                               // ms
-let pauseT = 0, pauseAsked = 0;
+let pauseT = 0, pauseAsked = 0, playAsked = 0;
 function setPlayIcon(p){
   $('icon').innerHTML = p ? '<path d="M6 4h4v16H6zM14 4h4v16h-4z"/>' : '<path d="M7 4.5v15l13-7.5z"/>';
   $('play').setAttribute('aria-label', p ? '暂停' : '播放');
@@ -98,6 +108,11 @@ function setPlayIcon(p){
 /* ---- one snapshot from the helper */
 function followApply(s){
   if (s.at < followCalAt && s.trackId === F.trackId) return;      // computed before the last calibration
+  const nowP = performance.now(), want = nowP < pauseAsked ? false : nowP < playAsked ? true : null;
+  if (want !== null && s.trackId === F.trackId){
+    if (!!s.playing !== want) return;     // the player has not caught up with the button pressed here yet
+    pauseAsked = playAsked = 0;
+  }
   const shown = followOn && F.at ? followNow() : 0;
   const was = { playing: F.playing, trackId: F.trackId };
   F = { pos: s.position, at: s.at, playing: !!s.playing, duration: s.duration || 0, trackId: s.trackId, app: s.app };
@@ -275,8 +290,9 @@ function coverMatch(it, s){
 let followFound = { my: 0, p: null };
 function followCoverItems(s, my){
   if (followFound.my !== my) followFound = { my, p: (async () => {
-    // some players (Kugou) give no album: use the one from the lyrics search, waiting for it at most 8 s
-    await Promise.race([followLyrWait, new Promise(r => setTimeout(r, 8000))]);
+    // some players (Kugou) give no album: use the one from the lyrics search, waiting for it at most 8 s. A player that
+    // names the album (QQ Music, Spotify, the QQ web window) needs no waiting for the lyrics
+    if (!s.album) await Promise.race([followLyrWait, new Promise(r => setTimeout(r, 8000))]);
     if (my !== followCoverSeq || !followOn) return null;
     s = { ...s, album: s.album || followAlbum || (lrcSong && lrcSong.meta && lrcSong.meta.al) || '' };
     // the album name is the better thing to search for; the song name finds singles. Both, album results first.
@@ -511,14 +527,52 @@ function setFollow(on, keepPref){
     $('status').textContent = '已退出跟随播放器，歌词保留';
   }
 }
+// QQ 网页跟随: desktop only (needs the pywebview window) and the player-reading component. pywebview's api may
+// not be ready when followInit first runs, so this is re-checked when it becomes ready (pywebviewready below).
+function updateQQBtn(){
+  const qqApi = window.pywebview && window.pywebview.api && window.pywebview.api.qq_open;
+  $('qqFollowBtn').hidden = !(qqApi && helper && helper.nowplaying === true);
+  $('labBtn').hidden = $('qqFollowBtn').hidden;          // 测试功能 (the more menu's second-level menu): only while it has something in it
+}
+addEventListener('pywebviewready', updateQQBtn);
+
 function followInit(){
   $('followBtn').hidden = !(helper && helper.nowplaying === true);
+  updateQQBtn();
   if ($('followBtn').hidden) return;
   let saved = true;                       // on by default; stays off once the user has turned it off
   try { saved = localStorage.getItem('lrc-follow') !== '0'; } catch(e){}
   if (saved) setFollow(true, true);
 }
 $('followBtn').onclick = () => setFollow(!followOn);
+
+/* QQ 网页跟随: open (or close) the QQ web-player window and follow it. The window feeds nowplaying as a player,
+   so turning follow on is enough — it is preferred over other players while open. */
+let qqFollowOn = false, qqWatchT = 0;
+function qqMark(on){
+  qqFollowOn = on;
+  $('qqFollowBtn').classList.toggle('on', on);
+  $('qqFollowBtn').setAttribute('aria-pressed', on);
+}
+function setQQFollow(on){
+  const api = window.pywebview && window.pywebview.api;
+  if (!api || !api.qq_open) return;
+  qqMark(on);
+  // the QQ window can be closed with its own dots: the switch then goes off by itself
+  clearInterval(qqWatchT); qqWatchT = 0;
+  if (on && api.qq_is_open) qqWatchT = setInterval(() => {
+    Promise.resolve(api.qq_is_open()).then(open => { if (!open && qqFollowOn){ clearInterval(qqWatchT); qqWatchT = 0; qqMark(false); } }).catch(() => {});
+  }, 1500);
+  if (on){
+    Promise.resolve(api.qq_open()).catch(() => {});
+    if (!followOn) setFollow(true);
+    $('status').textContent = '已打开 QQ 网页窗口，在里面放歌即可';
+  } else {
+    Promise.resolve(api.qq_close && api.qq_close()).catch(() => {});
+    if (followOn) setFollow(false);
+  }
+}
+$('qqFollowBtn').onclick = () => setQQFollow(!qqFollowOn);
 $('followApp').onchange = e => {
   try { localStorage.setItem('lrc-follow-app', e.target.value); } catch(e2){}
   F.trackId = '';                           // treat the next snapshot as a new song

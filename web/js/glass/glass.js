@@ -31,7 +31,10 @@ export {
      soft glow inside the bezel.
    The controls themselves stay normal page elements (text, clicks), only their background becomes transparent.
    The big panels keep the browser's own frosted blur (also GPU). */
-const GLASS_SEL = 'body:not(.am) .top .seg, body:not(.am) .bottom .tbar, .xpill';      // AM 布局: the controls lie under the cover, on nothing, and the header is hidden      // the bar is one piece of glass; what sits on it is not
+// AM 布局: the controls lie under the cover, on nothing, and the header is hidden; the volume pill at the top right
+// and the play list's two buttons are glass (.amvol, .amqcap: not shown, so not drawn, outside the AM layout).
+// The bar is one piece of glass; what sits on it is not
+const GLASS_SEL = 'body:not(.am) .top .seg, body:not(.am) .bottom .tbar, .xpill, .amvol, .amqcap';
 const GLASS_MAX = 40;
 /* the settings card (.modal.drawer .panel) as one piece of glass: frosted (text on it must stay readable over any
    cover), a wide soft rim that bends the picture a little, a clear edge light and a deep shadow */
@@ -59,7 +62,7 @@ vec3 scene(vec2 q){
   vec2 uv = clamp(q / res, 0., 1.);
   vec3 b = hasBg > .5 ? texture2D(bg, uv).rgb : vec3(0.);
   if (hasDom > .5){ vec4 m = texture2D(dom, uv); b = m.rgb + b * (1. - m.a); }   // cover panel (page elements copied to a canvas)
-  vec4 f = hasFg > .5 ? texture2D(fg, uv) : vec4(0.);
+  vec4 f = hasFg > 0. ? texture2D(fg, uv) * hasFg : vec4(0.);   // hasFg: how visible the lyrics are (faded for the play list)
   vec3 c = f.rgb + b * (1. - f.a);
   if (hasOvl > .5){                                 // words lying on the control under this piece of glass: bent with the rest
     vec2 u = (q - ovlRect.xy) / ovlRect.zw;
@@ -220,7 +223,9 @@ void main(){ vec2 h = hp * o; vec3 s = texture2D(src, uv + vec2(-h.x * 2., 0.)).
       gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, tDom);
       if (dom && domVer !== glassDomVer){ domVer = glassDomVer; gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, dom); gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false); }
       gl.uniform1f(U.hasDom, dom ? 1 : 0);
-      gl.uniform1f(U.hasBg, bgOn ? 1 : 0); gl.uniform1f(U.hasFg, fgOn ? 1 : 0);
+      // the lyrics as visible as they are: faded out for the AM layout's play list, or hidden by its lyrics button, the
+      // glass must not go on showing them
+      gl.uniform1f(U.hasBg, bgOn ? 1 : 0); gl.uniform1f(U.hasFg, fgOn ? Math.max(0, Math.min(1, +getComputedStyle(fgC).opacity || 0)) : 0);
       const ov = (items.find(it => it.ovl) || {}).ovl;          // one overlay at a time is enough
       if (ov){
         gl.activeTexture(gl.TEXTURE4); gl.bindTexture(gl.TEXTURE_2D, tOvl);
@@ -317,10 +322,13 @@ function drawGlass(){
     if (el.hidden || !el.offsetParent && getComputedStyle(el).position !== 'fixed') continue;
     const r = el.getBoundingClientRect();
     if (r.width < 4 || r.height < 4 || r.bottom < 0 || r.top > innerHeight) continue;
-    const hides = !!el.closest('.top, .bottom');
+    const hides = !!el.closest('.top, .bottom'), host = el.closest('.amui, .amq');
     let f = glassFade.get(el) ?? 1;
     f += ((hides && idle ? 0 : 1) - f) * (1 - Math.exp(-dt / 0.18));   // follows the controls' fade
     glassFade.set(el, f);
+    // AM 布局's corner controls and the play list: the glass takes their opacity as it is now, so it fades with them
+    // (idle, the list opening and closing) and comes in with their entrance (amIn), frame by frame
+    if (host) f *= +getComputedStyle(host).opacity * +getComputedStyle(el).opacity;
     if (f < 0.01) continue;
     const rad = Math.min(parseFloat(getComputedStyle(el).borderTopLeftRadius) || 0, r.width / 2, r.height / 2);
     const G = glassProfile('btn'), h = r.height * dpr, w = r.width * dpr;

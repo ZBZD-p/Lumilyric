@@ -56,7 +56,7 @@ function applyFx(){
   $('fxPerfLiteRow').hidden = $('fxPerfPosRow').hidden = $('fxPerfSizeRow').hidden = !fx.showFps;
   $('fxCover').checked = !!fx.cover; setCoverPanelDirty(true);
   $('fxAM').checked = !!fx.am && !!fx.cover;
-  $('amLyr').setAttribute('aria-pressed', String(fx.amLyrics !== false));      // AM 布局: the lyrics button (js/ui/am.js)
+  $('amLyr').setAttribute('aria-pressed', String(fx.amLyrics !== false && !document.body.classList.contains('am-queue')));      // AM 布局: the lyrics button (js/ui/am.js); off while the play list stands in their place
   if (!fx.showFps) $('fps').hidden = true;
   $('fxRenderNote').textContent = fx.render === 'webgl'
     ? '显卡泛光（线性光、逐级缩放叠加）。网页上看到的和导出的视频是同一个画面。'
@@ -174,7 +174,13 @@ function setAM(on){
   if (on && !calm && !body.classList.contains('am')){ body.classList.add('am-barout'); setTimeout(move, AM_BAR.out); }
   else move();
 }
-$('fxAM').onchange = e => setAM(e.target.checked);
+$('fxAM').onchange = e => {           // close the settings drawer first, so it is not left covering the layout switch
+  const on = e.target.checked;
+  if (!$('fxModal').hidden && !$('fxModal').classList.contains('closing')){
+    closeFx();
+    setTimeout(() => setAM(on), FX_OUT);
+  } else setAM(on);
+};
 document.querySelectorAll('#fxRender button').forEach(b => b.onclick = () => { fx.render = b.dataset.r; saveFx(); applyFx(); setCur(null); render(true); });
 document.querySelectorAll('#fxExit button').forEach(b => b.onclick = () => { fx.exit = b.dataset.exit; saveFx(); applyFx(); });
 $('fxExitDur').oninput = e => { fx.exitDur = e.target.value / 100; saveFx(); applyFx(); };

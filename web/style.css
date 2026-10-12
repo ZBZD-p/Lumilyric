@@ -580,6 +580,62 @@ body.desktop .amvol{top:32px}
 .amvol input[type=range]::-webkit-slider-thumb{width:13px;height:13px;margin-top:-4px;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.4)}
 .amvol input[type=range]::-moz-range-track{height:5px;border-radius:3px;background:rgba(255,255,255,.28)}
 .amvol input[type=range]::-moz-range-progress{height:5px;border-radius:3px;background:#fff}
+/* AM 布局: the play list (am.js), in the place of the lyrics, after Apple Music's full-screen player (macOS 26): two
+   wide buttons on top (here QQ's own: shuffle, repeat), then 继续播放 with where it comes from, a thin line, and one row
+   per song: its small picture, the name, "artist — album" in grey, a ⋯ for more, thin lines between. The song playing
+   is not in it (it is the big cover on the left); those already played are the 历史记录 above, scrolled out of view.
+   On the background as the lyrics are, its ends fading; the lyrics fade out for it */
+.amq{display:none}
+body.am .amq{display:flex;flex-direction:column;position:fixed;z-index:2;left:49.2vw;width:min(44.5vw,760px);top:9.5vh;bottom:0;color:#fff;
+  opacity:0;transform:translateX(2.5vw);pointer-events:none;transition:opacity .4s var(--ease),transform .55s var(--ease)}
+body.desktop.am .amq{top:calc(9.5vh + 18px)}
+body.am.am-queue .amq{opacity:1;transform:none;pointer-events:auto}
+.amqcaps{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:0 0 18px}
+.amqcap{all:unset;box-sizing:border-box;height:36px;border-radius:999px;display:flex;align-items:center;justify-content:center;gap:7px;cursor:pointer;
+  font-size:13px;font-weight:500;color:rgba(255,255,255,.92);background:rgba(255,255,255,.12);box-shadow:inset 0 0 0 .5px rgba(255,255,255,.14);
+  transition:background-color .2s,color .2s,transform .25s cubic-bezier(.3,1.7,.5,1)}
+.amqcap:hover{background:rgba(255,255,255,.18)}
+.amqcap:active{transform:scale(.96)}
+.amqcap:focus-visible{outline:2px solid #fff;outline-offset:2px}
+.amqcap svg{width:17px;height:17px;fill:currentColor}
+.amqcap svg .ln{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.amqcap[aria-pressed="true"],body.ui-glass .amqcap.lg[aria-pressed="true"]{background:rgba(255,255,255,.88);color:#111}
+svg .one{display:none}
+[data-rep="one"] svg .one{display:inline}
+/* (12px of room on each side, taken back by the margin: a row's highlight reaches 10px past the row, and a scrolling
+   box cuts off whatever goes past its edges, its rounded corners first) */
+.amqsc{flex:1;overflow-y:auto;scrollbar-width:none;margin:0 -12px;padding:0 12px 22vh;
+  -webkit-mask-image:linear-gradient(transparent,#000 14px,#000 calc(100% - 18vh),transparent);mask-image:linear-gradient(transparent,#000 14px,#000 calc(100% - 18vh),transparent)}
+.amqsc::-webkit-scrollbar{display:none}
+.amqsec+.amqsec{margin-top:26px}
+.amqh{display:flex;flex-direction:column;gap:2px;padding:0 0 9px;border-bottom:.5px solid rgba(255,255,255,.16)}
+.amqh b{font-size:15px;font-weight:700;letter-spacing:.01em}
+.amqh span{font-size:12.5px;color:rgba(255,255,255,.55)}
+.amql{list-style:none;margin:0;padding:0}
+.amqi{position:relative;display:grid;grid-template-columns:36px minmax(0,1fr) 28px;align-items:center;gap:12px;padding:7px 4px 7px 2px;cursor:pointer;border-bottom:.5px solid rgba(255,255,255,.1)}
+.amqi:last-child{border-bottom:0}
+/* under the pointer: a rounded rectangle, as in Apple Music, the thin lines next to it giving way */
+.amqi::before{content:"";position:absolute;inset:0 -10px;border-radius:12px;background:rgba(255,255,255,0);transition:background-color .18s;z-index:-1}
+.amqi:hover::before{background:rgba(255,255,255,.09)}
+.amqi:active::before{background:rgba(255,255,255,.14)}
+.amqi:hover,.amqi:has(+ .amqi:hover){border-bottom-color:transparent}
+.amqi img,.amqi .ph{display:block;width:36px;height:36px;border-radius:4px;object-fit:cover;background:rgba(255,255,255,.1);box-shadow:0 0 0 .5px rgba(255,255,255,.08)}
+.amqi .t{display:block;font-size:13.5px;line-height:1.3;color:rgba(255,255,255,.94);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.amqi .a{display:block;font-size:11.5px;line-height:1.35;color:rgba(255,255,255,.55);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.amqi .x{all:unset;width:28px;height:28px;border-radius:50%;display:grid;place-items:center;color:rgba(255,255,255,.6);cursor:pointer;transition:background-color .15s,color .15s}
+.amqi .x:hover,.amqi .x[aria-expanded="true"]{background:rgba(255,255,255,.14);color:#fff}
+.amqi .x svg{width:16px;height:16px;fill:currentColor}
+#amQHist .amqi{opacity:.6}
+.amqe{margin:0;padding:12px 0;color:rgba(255,255,255,.6);font-size:13.5px;line-height:1.7}
+.amqmenu{position:absolute;z-index:5;min-width:180px;padding:5px;border-radius:12px;background:rgba(40,40,44,.72);
+  -webkit-backdrop-filter:blur(30px) saturate(1.6);backdrop-filter:blur(30px) saturate(1.6);box-shadow:inset 0 0 0 .5px rgba(255,255,255,.16),0 12px 32px rgba(0,0,0,.35);
+  display:flex;flex-direction:column;animation:ddIn .16s var(--ease) both}
+.amqmenu[hidden]{display:none}
+.amqmenu button{all:unset;padding:6px 10px;border-radius:7px;font-size:13px;color:#fff;cursor:pointer}
+.amqmenu button:hover,.amqmenu button:focus-visible{background:rgba(255,255,255,.14)}
+body.am.am-queue #glView{opacity:0!important}
+body.am.am-qx #glView{transition:opacity .35s var(--ease)}
+@media (prefers-reduced-motion:reduce){body.am .amq{transition:opacity .2s;transform:none}}
 /* bottom right, as in Apple Music: the two lyric buttons are pale discs with dark signs, side by side on one pill of
    frosted glass (what is behind it shows through, blurred) */
 .amfabs{position:fixed;z-index:3;right:16px;bottom:14px;display:flex;align-items:center;gap:10px}
@@ -621,6 +677,16 @@ body.am .menu{right:auto;left:calc(100% + 12px);bottom:calc(100% + var(--am-up,6
 @media (prefers-reduced-motion:reduce){.menu,.menu.closing,.menu .mgroup{animation-duration:.01s;animation-delay:0s}}
 body.ui-glass .menu{background:rgba(30,30,32,.5);-webkit-backdrop-filter:blur(28px) saturate(1.7);backdrop-filter:blur(28px) saturate(1.7);border-color:transparent;
   box-shadow:inset 0 1px 0 rgba(255,255,255,.22),inset 0 0 0 .5px rgba(255,255,255,.1),0 18px 50px rgba(0,0,0,.35)}
+/* a second-level menu (menu.js): beside the menu, looking like it, growing from the side of the row that opened it */
+.submenu{position:fixed;z-index:30;width:min(240px,calc(100vw - 24px));box-sizing:border-box;padding:6px;border-radius:16px;border:1px solid var(--hair);
+  background:rgba(22,22,24,.96);box-shadow:0 18px 50px rgba(0,0,0,.45);animation:subIn .3s cubic-bezier(.22,1.18,.36,1) both}
+.submenu[hidden]{display:none}
+@keyframes subIn{from{opacity:0;transform:scale(.88)}55%{opacity:1}to{opacity:1;transform:none}}
+body.ui-glass .submenu{background:rgba(30,30,32,.5);-webkit-backdrop-filter:blur(28px) saturate(1.7);backdrop-filter:blur(28px) saturate(1.7);border-color:transparent;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.22),inset 0 0 0 .5px rgba(255,255,255,.1),0 18px 50px rgba(0,0,0,.35)}
+@media (prefers-reduced-motion:reduce){.submenu{animation:none}}
+.mchev{flex:none;width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;opacity:.55}
+.mi.open{background:rgba(255,255,255,.1)}
 .mgroup+.mgroup{margin-top:5px;padding-top:5px;border-top:1px solid var(--hair)}
 .mgroup:not(:has(> .mi:not([hidden]))){display:none}
 .mhead{padding:5px 10px 3px;font-size:11px;letter-spacing:.06em;color:var(--dim)}

@@ -46,9 +46,11 @@ KNOWN_APPS = [
     ("kuwo", "酷我音乐", ""),
     ("spotify", "Spotify", ""),
     ("applemusic", "Apple Music", ""),
-    ("chrome", "Chrome", ""),
-    ("msedge", "Edge", ""),
 ]
+# Browsers are not followed: a video or a page with sound in a tab is a "media session" too, and would take the
+# lyrics away from the music player. (Lower-case substrings of the app id; Firefox registers under a number.)
+BROWSERS = ("chrome", "msedge", "microsoftedge", "firefox", "308046b0af4a39cb", "opera", "brave", "vivaldi", "browser",
+            "360se", "sogouexplorer", "iexplore", "maxthon", "yandex")
 
 _LOCK = threading.Lock()
 _PLAYERS = {}                         # app id -> PlayerState
@@ -85,6 +87,16 @@ def app_info(app):
         if key in low:
             return name, src
     return (app or ""), ""
+
+
+def is_browser(app):
+    low = (app or "").lower()
+    return any(b in low for b in BROWSERS)
+
+
+def is_music_app(app):
+    low = (app or "").lower()
+    return any(key in low for key, _, _ in KNOWN_APPS)
 
 
 def track_id(app, title, artist, album):
@@ -335,18 +347,20 @@ def _refresh():
 
 
 def _pick(app):
-    """Which player to show: the one asked for, else the one that is playing, else the system's current one."""
-    metas = [_META[a] for a in _ORDER if a in _META]
+    """Which player to show: the one asked for, else the one that is playing, else the system's current one.
+    Browsers are left out altogether (BROWSERS), and a music player (KNOWN_APPS) comes before any other program,
+    even a paused one before a video player that is playing; another program is followed when no music player is
+    open, or when it is asked for by name (the page's 跟随哪个播放器)."""
+    metas = [_META[a] for a in _ORDER if a in _META and not is_browser(a)]
     if app:
         for m in metas:
             if m["app"] == app:
                 return m, metas
-    playing = [m for m in metas if m["playing"]]
-    if len(playing) == 1:
-        return playing[0], metas
-    if playing:
-        return next((m for m in playing if m["app"] == _CUR), playing[0]), metas
-    return next((m for m in metas if m["app"] == _CUR), metas[0] if metas else None), metas
+    if not metas:
+        return None, metas
+    order = {m["app"]: i for i, m in enumerate(metas)}
+    best = min(metas, key=lambda m: (not is_music_app(m["app"]), not m["playing"], m["app"] != _CUR, order[m["app"]]))
+    return best, metas
 
 
 def snapshot(app=""):
@@ -357,7 +371,7 @@ def snapshot(app=""):
     with _LOCK:
         m, metas = _pick(app)
         if not m:
-            return {"ok": False, "reason": _REASON or "没有检测到正在播放的媒体（先在播放器里放一首歌）"}
+            return {"ok": False, "reason": _REASON or "没有检测到正在播放的音乐播放器（先在播放器里放一首歌；浏览器里播放的不跟随）"}
         st = _PLAYERS[m["app"]]
         return {"ok": True, "app": m["app"], "appName": m["appName"], "title": m["title"], "artist": m["artist"],
                 "album": m["album"], "duration": round(st.duration(now), 2), "position": round(st.position(now), 3),

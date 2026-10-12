@@ -1,6 +1,7 @@
 """
 Disk cache for the "follow the player" feature: the lyrics found for a song and the sharp cover chosen for it, so
-the second time a song plays they are there at once, without searching or downloading anything.
+the second time a song plays they are there at once, without searching or downloading anything. Also the moving
+covers downloaded from Apple Music (cover search), by album.
 
 Lives in tools\\cache (not part of the repository; delete the folder to clear it). Keyed by the song itself
 (title, artist, album, normalised), not by the player. Size is capped (LRC_CACHE_MB, default 300): the files that
@@ -17,6 +18,7 @@ import unicodedata
 ROOT = os.environ.get("LRC_CACHE_DIR") or os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools", "cache")
 MAX_BYTES = int(float(os.environ.get("LRC_CACHE_MB", "300")) * 1024 * 1024)
 MAX_IMAGE = 8 * 1024 * 1024
+MAX_MOTION = 80 * 1024 * 1024
 _LOCK = threading.Lock()
 _puts = 0
 
@@ -135,6 +137,36 @@ def put_cover(key, data, mime="image/jpeg", side=0, label=""):
     return True
 
 
+# ---------------------------------------------------------------- moving covers
+def _motion_path(album, country):
+    return os.path.join(_dir("motion"), f"{country}{album}.mp4")
+
+
+def get_motion(album, country):
+    """The moving cover of an Apple Music album (cover_search.fetch_motion), an MP4 file, or None."""
+    path = _motion_path(album, country)
+    with _LOCK:
+        try:
+            with open(path, "rb") as f:
+                data = f.read()
+        except OSError:
+            return None
+        if data[4:8] != b"ftyp":
+            _drop(path)
+            return None
+        _touch(path)
+        return data
+
+
+def put_motion(album, country, data):
+    if not data or len(data) > MAX_MOTION or data[4:8] != b"ftyp":
+        return False
+    with _LOCK:
+        _write(_motion_path(album, country), data)
+    prune()                                    # these are large: make room at once
+    return True
+
+
 # ---------------------------------------------------------------- size
 def _after_put():
     global _puts
@@ -148,7 +180,7 @@ def prune(max_bytes=None):
     limit = MAX_BYTES if max_bytes is None else max_bytes
     files = []
     with _LOCK:
-        for kind in ("lyrics", "covers"):
+        for kind in ("lyrics", "covers", "motion"):
             d = os.path.join(ROOT, kind)
             if not os.path.isdir(d):
                 continue

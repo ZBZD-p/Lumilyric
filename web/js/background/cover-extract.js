@@ -3,9 +3,11 @@ import { coverHi, coverURL, mkCanvas, paletteFrom, prepCoverTex, setBgDirty, set
 
 export {
   coverSide,
+  coverVideo,
   extractCover,
   imageSide,
   setCover,
+  setCoverVideo,
 };
 
 /* Cover picture embedded in audio files */
@@ -78,9 +80,34 @@ let coverSide = 0;
 async function imageSide(blob){
   try { const b = await createImageBitmap(blob), s = Math.min(b.width, b.height); if (b.close) b.close(); return s; } catch(e){ return 0; }
 }
-async function setCover(blob, label){
+/* A moving cover (a short video picked by hand, like the animated covers of Apple Music): the cover panel of the live
+   page plays it in a loop (updateCoverPanel, frame.js), and the 封面流动 background of the live page follows the picture
+   as it changes (makeFlowGL, background.js). Everything else goes on using a still taken from it, set as the cover in
+   the usual way: the colours of the light pools, the picture in the settings, the exported video. Any cover set
+   afterwards replaces it. */
+let coverVideo = null;
+Object.defineProperty(late, 'coverVideo', { get: () => coverVideo, enumerable: true, configurable: true });      // background.js is loaded first
+async function setCoverVideo(file, label){
+  const url = URL.createObjectURL(file), v = document.createElement('video');
+  Object.assign(v, { muted: true, loop: true, playsInline: true, preload: 'auto', src: url });
+  const once = ev => new Promise((ok, no) => { v.addEventListener(ev, ok, { once: true }); v.addEventListener('error', no, { once: true }); setTimeout(no, 10000); });
+  try {
+    await once('loadeddata');
+    if (!v.videoWidth) throw 0;
+    // a still from a little way in: the very first frame is often black or a fade from black
+    if (v.duration > 0.5){ v.currentTime = Math.min(1, v.duration / 3); await once('seeked'); }
+    const c = Object.assign(document.createElement('canvas'), { width: v.videoWidth, height: v.videoHeight });
+    c.getContext('2d').drawImage(v, 0, 0);
+    const still = await new Promise(ok => c.toBlob(ok, 'image/jpeg', 0.92));
+    if (!still || !await setCover(still, label, v)) throw 0;
+    return true;
+  } catch (e){ URL.revokeObjectURL(url); return false; }
+}
+async function setCover(blob, label, video = null){
   try {
     const bmp = await createImageBitmap(blob);
+    if (coverVideo && coverVideo !== video){ coverVideo.pause(); URL.revokeObjectURL(coverVideo.src); coverVideo.remove(); }
+    coverVideo = video;
     coverSide = Math.min(bmp.width, bmp.height);
     const s = 256, k = Math.min(1, s / Math.max(bmp.width, bmp.height));      // keep a small copy: it gets blurred anyway
     const c = mkCanvas(Math.max(1, Math.round(bmp.width * k)), Math.max(1, Math.round(bmp.height * k)));

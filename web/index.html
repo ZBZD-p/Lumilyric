@@ -252,7 +252,10 @@
       <div class="fxrow fxbgopt"><label>封面</label>
         <div class="coverrow"><img id="fxCoverImg" alt=""><span id="fxCoverName"></span><b class="pal fxblobopt" id="fxPal" title="从封面里取出的主色"></b>
           <button class="btn btn-sm" id="coverSearchBtn" title="在 QQ音乐、网易云、酷狗和 Apple Music 搜专辑封面">搜封面</button>
-          <label class="btn btn-sm" for="coverFile">选图片</label><input type="file" id="coverFile" accept="image/*" hidden></div><span></span></div>
+          <label class="btn btn-sm" for="coverFile" title="选一张图片，也可以选一段短视频（MP4 / WebM）或 GIF 当动态封面，在封面上循环播放">选图片</label><input type="file" id="coverFile" accept="image/*,video/mp4,video/webm,.mp4,.m4v,.mov,.webm" hidden></div><span></span></div>
+      <div class="fxhead fxbgopt" id="fxBgCoverLiveRow"><span style="font-size:13px;color:var(--dim)">背景跟随动态封面</span>
+        <label class="switch" title="封面是会动的视频时，「封面流动」的背景跟着封面当前的画面变色；关闭时背景只取视频里的一帧。导出的视频不受影响"><input type="checkbox" id="fxBgCoverLive" aria-label="背景跟随动态封面"><span></span></label></div>
+      <div class="fxrow fxbgopt" id="fxBgCoverGlideRow" title="背景跟上封面画面要多久：越小跟得越紧，0 = 立刻跟上（画面硬切时背景也会跟着跳）；越大越柔和、越滞后"><label for="fxBgCoverGlide">响应时间</label><input type="range" id="fxBgCoverGlide" min="0" max="1" step="0.02"><output id="fxBgCoverGlideV"></output></div>
       <div class="fxrow fxbgopt"><label for="fxBgSpeed">流速</label><input type="range" id="fxBgSpeed" min="0" max="300" step="5"><output id="fxBgSpeedV"></output></div>
       <div class="fxrow fxbgopt"><label for="fxBgPulse" title="背景跟着低音（鼓、贝斯）动起来的幅度，0 是关闭">律动</label><input type="range" id="fxBgPulse" min="0" max="100" step="5"><output id="fxBgPulseV"></output></div>
       <div class="fxrow fxbgopt"><label>方式</label>
@@ -260,6 +263,8 @@
           <button data-pm="breath" title="随低音强弱缓缓胀缩、带一点转动，像 Apple Music">呼吸</button>
           <button data-pm="beat" title="每个鼓点都快速放大、闪亮一下，再迅速回落">节拍</button>
         </div><span></span></div>
+      <div class="fxrow fxbgopt" title="多低的声音才算低音：只有低于这个频率的声音会带动背景。140 Hz 包括底鼓和贝斯；调低后只剩最沉的那一下，贝斯和人声的低频不再带动"><label for="fxBgPulseHz">低音范围</label><input type="range" id="fxBgPulseHz" min="40" max="300" step="10"><output id="fxBgPulseHzV"></output></div>
+      <div class="fxrow fxbgopt" title="低音要多强背景才开始动。调高后弱的低音被忽略，只有重拍才带动背景；0 = 有低音就动"><label for="fxBgPulseGate">触发强度</label><input type="range" id="fxBgPulseGate" min="0" max="90" step="5"><output id="fxBgPulseGateV"></output></div>
       <p class="fxtip fxbgopt" id="fxBgPulseNote"></p>
       <div class="fxrow fxbgopt fxblobopt"><label for="fxBgColors">颜色数</label><input type="range" id="fxBgColors" min="2" max="6" step="1"><output id="fxBgColorsV"></output></div>
       <div class="fxrow fxbgopt"><label for="fxBgGrain" title="胶片一样的颗粒感，纯属风格；色带已经由抖动处理掉了，默认是 0">颗粒</label><input type="range" id="fxBgGrain" min="0" max="10" step="0.5"><output id="fxBgGrainV"></output></div>

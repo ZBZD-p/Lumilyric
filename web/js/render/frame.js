@@ -4,6 +4,7 @@ import { exitTotal, fx, lt, lyricDelay, now } from '../core/settings.js';
 import { oneLine } from './view-dom.js';
 import { buildTimeline, canvasMeasurer, clamp01, drawSeg, easeOut, setDrawOnColour, setSpriteAlphaMul } from './text-canvas.js';
 import { coverHi, coverURL, drawFlowBg, exportDith, exportProf, flowPalette } from '../background/background.js';
+import { coverVideo } from '../background/cover-extract.js';
 import { bloomOpts, exportBloomGL, useWebGL } from './bloom.js';
 import { bloomTL, drawScroll, drawScrollOne, scrollAnchor, scrollE, setBloomTL, songStage, useScroll } from './layout-scroll.js';
 import { drawWords, useWordMode } from './layout-words.js';
@@ -122,7 +123,8 @@ function coverSlide(el, on){
 function updateCoverPanel(){
   const el = $('coverPanel');
   document.body.classList.toggle('cover-on', useCoverPanel());      // style.css: the header's own title steps aside in portrait
-  if (!useCoverPanel()){ coverSlide(el, false); coverPanelKey = ''; return; }
+  if (!useCoverPanel()){ coverSlide(el, false); coverPanelKey = ''; if (coverVideo && !coverVideo.paused) coverVideo.pause(); return; }
+  if (coverVideo && coverVideo.paused && coverVideo.isConnected) coverVideo.play().catch(() => {});      // a moving cover plays while the panel shows
   const r = liveRect();
   const key = [r.left, r.top, r.width, r.height, coverTitle(), coverArtist(), coverURL].join('|');
   if (!coverPanelDirty && key === coverPanelKey) return;
@@ -136,6 +138,12 @@ function updateCoverPanel(){
   art.style.setProperty('--cr', L.r + 'px'); art.style.setProperty('--cs', L.s + 'px');
   if (coverURL) coverBlend(art, `url("${coverURL}")`);
   else { const P = flowPalette; coverBlend(art, `linear-gradient(135deg, rgb(${P[0].join(',')}), rgb(${(P[2] || P[1] || P[0]).join(',')}))`); }
+  // a moving cover (setCoverVideo, cover-extract.js) lies over its own still, under the picture that fades out
+  const vid = art.querySelector('video');
+  if (vid !== coverVideo){
+    if (vid) vid.remove();
+    if (coverVideo){ coverVideo.className = 'covvid'; art.insertBefore(coverVideo, art.firstChild); coverVideo.play().catch(() => {}); }
+  }
   const ti = $('covTi'), ar = $('covAr');
   const txt = coverTitle() + '|' + coverArtist();
   ti.textContent = coverTitle(); ar.textContent = coverArtist();

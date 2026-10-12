@@ -8,6 +8,7 @@ import { createLookMelt } from './look-melt.js';
 export {
   GRAIN,
   analyzeBass,
+  bassBuild,
   bassBusy,
   bassEnv,
   coverBmp,
@@ -31,6 +32,8 @@ export {
   mkCanvas,
   paletteFrom,
   prepCoverTex,
+  pulseGate,
+  pulseHz,
   setBgDirty,
   setCoverBmp,
   setCoverHi,
@@ -170,22 +173,49 @@ const GRAIN = (() => {
 const BASS_RATE = 60;                               // values per second
 let bassEnv = null, bassBusy = false;
 const followBassOn = () => typeof late.followBassLive === 'function' && late.followBassLive();     // follow.js loads later
+/* two settings of the pulse (背景 panel), for an analysed file and for the live sound of a player alike:
+   低音范围 (fx.bg.pulseHz): what counts as bass, everything below this many Hz. 140 takes the kick drum and the bass
+   line; lower, only the deepest thump is left.
+   触发强度 (fx.bg.pulseGate): how strong the bass must be before anything moves. Below it the background is still;
+   from there to the loudest bass it goes from nothing to the full pulse. 0 = everything moves it, as before. */
+const pulseHz = () => Math.min(300, Math.max(40, +fx.bg.pulseHz || 140));
+const pulseGate = v => { const g = Math.min(0.95, Math.max(0, +fx.bg.pulseGate || 0)); return g > 0 ? Math.max(0, (v - g) / (1 - g)) : v; };
+/* the song's sound kept for the pulse: one channel, thinned out to about 2 kHz (plenty for what lies below 300 Hz),
+   so that 低音范围 can be changed without reading the file again. per: how many of its values make one pulse value */
+let bassSrc = null;
 async function analyzeBass(file){
-  bassEnv = null; bassBusy = true; late.applyFx();
+  bassEnv = null; bassSrc = null; bassBusy = true; late.applyFx();
   try {
     const AC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
     const ab = await new AC(1, 44100, 44100).decodeAudioData(await file.arrayBuffer());
     const sr = ab.sampleRate, n = ab.length, chs = [...Array(ab.numberOfChannels)].map((_, i) => ab.getChannelData(i));
-    const a = Math.exp(-2 * Math.PI * 140 / sr);    // two one-pole low-passes at about 140 Hz: kick drum and bass
-    const hop = Math.max(1, Math.round(sr / BASS_RATE)), frames = Math.ceil(n / hop);
+    const hop = Math.max(1, Math.round(sr / BASS_RATE));
+    let k = 1;                                      // averaged k at a time; k divides hop, so the pulse values fall where they always did
+    for (let d = Math.floor(sr / 1500); d > 1; d--) if (hop % d === 0){ k = d; break; }
+    const m = Math.floor(n / k), x = new Float32Array(m);
+    for (let j = 0; j < m; j++){
+      let s = 0;
+      for (const c of chs) for (let i = j * k, e = i + k; i < e; i++) s += c[i];
+      x[j] = s / (k * chs.length);
+      if ((j & 0x3ffff) === 0) await new Promise(r => setTimeout(r, 0));     // stay responsive on long songs
+    }
+    bassSrc = { x, rate: sr / k, per: hop / k };
+    bassBuild();
+  } catch (e){ bassEnv = null; }
+  bassBusy = false; bgDirty = true; late.applyFx();
+}
+/* the pulse of the whole song from bassSrc, for the 低音范围 now set (a few ms: done again whenever that changes) */
+function bassBuild(){
+  if (!bassSrc) return;
+  try {
+    const { x, rate, per } = bassSrc, n = x.length, frames = Math.ceil(n / per);
+    const a = Math.exp(-2 * Math.PI * pulseHz() / rate);    // two one-pole low-passes at 低音范围 (140 Hz: kick drum and bass)
     const env = new Float32Array(frames);
     let y1 = 0, y2 = 0, acc = 0, k = 0, f = 0;
     for (let i = 0; i < n; i++){
-      let x = 0; for (const c of chs) x += c[i]; x /= chs.length;
-      y1 = (1 - a) * x + a * y1; y2 = (1 - a) * y1 + a * y2;
+      y1 = (1 - a) * x[i] + a * y1; y2 = (1 - a) * y1 + a * y2;
       acc += y2 * y2;
-      if (++k === hop){ env[f++] = Math.sqrt(acc / k); acc = 0; k = 0; }
-      if ((i & 0x3fffff) === 0) await new Promise(r => setTimeout(r, 0));     // stay responsive on long songs
+      if (++k === per){ env[f++] = Math.sqrt(acc / k); acc = 0; k = 0; }
     }
     // "节拍": loud against the last second or so = a beat; quick attack, slower release
     const sortedL = Float32Array.from(env).sort(), ref = sortedL[Math.floor(sortedL.length * 0.97)] || 1;
@@ -214,7 +244,7 @@ async function analyzeBass(file){
     }
     bassEnv = { breath: out, beat };
   } catch (e){ bassEnv = null; }
-  bassBusy = false; bgDirty = true; late.applyFx();
+  bgDirty = true;
 }
 function bassAt(t){
   if (followBassOn()) return late.followBassAt();      // following a player: the live system sound, not an analysed file
@@ -222,7 +252,7 @@ function bassAt(t){
   const E = fx.bg.pulseMode === 'beat' ? bassEnv.beat : bassEnv.breath;
   const x = t * BASS_RATE, i = Math.floor(x);
   if (i < 0 || i >= E.length - 1) return 0;
-  return (E[i] + (E[i + 1] - E[i]) * (x - i)) * fx.bg.pulse;
+  return pulseGate(E[i] + (E[i + 1] - E[i]) * (x - i)) * fx.bg.pulse;
 }
 /* how the pulse shows: 节拍 = quick zoom and a flash of light, 呼吸 = slow swell with a little extra turn */
 const pulseLook = () => fx.bg.pulseMode === 'beat' ? { zoom: 0.16, turn: 0, light: 0.2, grow: 0.14 } : { zoom: 0.22, turn: 0.35, light: 0, grow: 0.25 };
@@ -281,7 +311,12 @@ let coverTex = null, coverTexVer = 0;
 function prepCoverTex(img){
   const n = 32, c = Object.assign(document.createElement('canvas'), { width: n, height: n }), x = c.getContext('2d', { willReadFrequently: true });
   x.drawImage(img, 0, 0, n, n);
-  const im = x.getImageData(0, 0, n, n), d = im.data;
+  const im = x.getImageData(0, 0, n, n);
+  coverLook(im.data, n);
+  x.putImageData(im, 0, 0);
+  coverTex = c; coverTexVer++;
+}
+function coverLook(d, n){                           // the colours pushed and blurred, in place (d: n x n RGBA)
   for (let i = 0; i < d.length; i += 4){
     let r = (d[i] - 128) * 0.45 + 128, g = (d[i + 1] - 128) * 0.45 + 128, b = (d[i + 2] - 128) * 0.45 + 128;
     const y = r * 0.3 + g * 0.59 + b * 0.11;
@@ -301,9 +336,25 @@ function prepCoverTex(img){
       }
     }
   }
-  x.putImageData(im, 0, 0);
-  coverTex = c; coverTexVer++;
 }
+/* the same of a picture that changes (the frame a moving cover is showing): one small canvas, used again each time */
+let lookCv = null, lookX = null;
+function coverLookOf(src){
+  if (!lookCv){ lookCv = Object.assign(document.createElement('canvas'), { width: 32, height: 32 }); lookX = lookCv.getContext('2d', { willReadFrequently: true }); }
+  lookX.drawImage(src, 0, 0, 32, 32);
+  const d = lookX.getImageData(0, 0, 32, 32).data;
+  coverLook(d, 32);
+  return d;
+}
+/* A moving cover (cover-extract.js) and the 封面流动 background of the live page: once the background has melted into
+   the cover's still, the picture the video is showing takes the still's place, a little more of it with every frame
+   (glide: the seconds it trails by), so the whole background changes colour with the cover, gliding even where the
+   video cuts. Not in the exported video, and not for 主色光斑, whose colours are picked once from the still.
+   A setting (背景 panel: 背景跟随动态封面, fx.bg.coverLive), off unless switched on; 响应时间 beside it is the glide
+   (fx.bg.coverLiveGlide, 0 = at once ... 1 s). */
+const COVER_LIVE = { every: 33, glide: 0.12 };
+const coverLiveOn = () => !!fx.bg.coverLive && fx.bg.style !== 'blobs';
+const coverLiveGlide = () => { const g = +fx.bg.coverLiveGlide; return isFinite(g) ? Math.min(1, Math.max(0, g)) : COVER_LIVE.glide; };
 function defaultCoverTex(){                        // until there is a cover: soft blobs of the default palette
   const n = 32, c = Object.assign(document.createElement('canvas'), { width: n, height: n }), x = c.getContext('2d');
   x.fillStyle = FLOW_DEFAULT[0]; x.fillRect(0, 0, n, n);
@@ -336,7 +387,7 @@ function makeFlowGL(canvas){
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.MIRRORED_REPEAT);   // mirrored: no seams where the turned image runs out
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.MIRRORED_REPEAT);
   gl.uniform1i(u.tex, 0);
-  let frame = 0, texVer = -1, shown = null, lastCover = null;
+  let frame = 0, texVer = -1, shown = null, lastCover = null, live = null;      // live: the look that follows a moving cover
   const melt = createLookMelt(MELT_MS);                // the live page's look; the export renderer never melts
   const pixelsOf = src => {
     const c = Object.assign(document.createElement('canvas'), { width: 32, height: 32 }), x = c.getContext('2d', { willReadFrequently: true });
@@ -352,8 +403,10 @@ function makeFlowGL(canvas){
       let P = curPalette(), st = cover ? 1 : 0;
       if (api.fade){
         // the look comes from the melt: a new cover, or the other style, starts a melt from what is on screen, whatever is under way
-        if (texVer !== wantVer || lastCover !== cover){
+        if (texVer !== wantVer || lastCover !== cover || (live && !coverLiveOn())){      // ... or 背景跟随动态封面 was switched off: back to the still
           texVer = wantVer; lastCover = cover;
+          // the background was following a moving cover: the melt starts from what that left on screen, not from the still
+          if (live){ melt.set({ pix: Uint8ClampedArray.from(live.buf), pal: live.pal, st: live.st }, nowMs - 2 * MELT_MS); live = null; }
           melt.set({ pix: pixelsOf(coverTex || defaultCoverTex()), pal: flowPalette.map(c => c.slice()), st }, nowMs);
         }
         const look = melt.at(nowMs);
@@ -367,6 +420,21 @@ function makeFlowGL(canvas){
           }
         }
         api.animating = melt.busy(nowMs);
+        const v = cover && look && !api.animating && coverLiveOn() ? late.coverVideo : null;
+        if (v && v.readyState >= 2 && v.videoWidth && !v.paused){
+          if (!live || live.of !== v) live = { of: v, buf: Float32Array.from(look.pix), out: new Uint8ClampedArray(look.pix.length), pal: look.pal, st: look.st, at: 0 };
+          if (nowMs - live.at >= COVER_LIVE.every){
+            const g = coverLiveGlide(), k = g > 0.005 ? 1 - Math.exp(-(live.at ? Math.min(0.25, (nowMs - live.at) / 1000) : COVER_LIVE.every / 1000) / g) : 1;
+            live.at = nowMs;
+            try {
+              const px = coverLookOf(v), b = live.buf, o = live.out;
+              for (let i = 0; i < b.length; i++){ b[i] += (px[i] - b[i]) * k; o[i] = b[i]; }
+              gl.bindTexture(gl.TEXTURE_2D, texture);
+              gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 32, 32, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(o.buffer));
+            } catch (e){}
+          }
+          api.animating = true;                      // keep drawing while the cover moves, even when the song is paused
+        }
       } else if (cover && texVer !== wantVer){
         gl.bindTexture(gl.TEXTURE_2D, texture);
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, coverTex || defaultCoverTex());
@@ -426,6 +494,8 @@ function drawLiveBg(){
   c.classList.toggle('on', on);
   if (!on) return;
   const ms = performance.now(), t = now();
+  const cv = late.coverVideo;
+  if (cv && !cv.paused && coverLiveOn()) bgDirty = true;      // a moving cover: the background follows it, also while the song is paused
   if (ms - bgLastDraw < ((bassEnv || followBassOn()) && fx.bg.pulse > 0 ? 15 : 33) || (t === bgLastT && !bgDirty)) return;   // 30 fps, 60 when pulsing; nothing while paused
   bgLastDraw = ms; bgLastT = t; bgDirty = false;
   if (liveGL === undefined){ try { liveGL = makeFlowGL(c); if (liveGL) liveGL.fade = true; } catch(e){ liveGL = null; } }

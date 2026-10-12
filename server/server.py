@@ -13,6 +13,7 @@ API (JSON):
   GET  /api/nowplaying?app=   what the desktop player is playing: {ok, app, appName, title, artist, album,
                               duration, position, playing, at, trackId, sessions[]}  (needs setup_nowplaying.bat)
   GET  /api/nowplaying/bass?since=ms  low-frequency level of the system sound {ok, rate, now, samples: [[ms, level]]}
+  GET  /api/nowplaying/bass/cut?hz=   what counts as low for that level (40-300 Hz, 140 unless set)
   GET  /api/nowplaying/cover?track=   the player's cover image bytes (404 when none)
   POST /api/nowplaying/lyrics {trackId}    -> {lrc, source, title, verbatim, score} or {lrc: null, reason}
   POST /api/nowplaying/cover/save?track=&side=  raw image body: keep the sharp cover chosen for this song
@@ -232,6 +233,11 @@ class Handler(BaseHTTPRequestHandler):
             since = int((parse_qs(urlparse(self.path).query).get("since") or ["0"])[0] or 0)
             return self.send(200, {"ok": True, "rate": AUD.RATE, "now": int(time.time() * 1000),
                                    "samples": AUD.samples(since), "reason": AUD.reason()})
+        if path == "/api/nowplaying/bass/cut":         # the page's 低音范围 setting: what counts as bass, in Hz
+            try:
+                return self.send(200, {"ok": True, "hz": AUD.set_cut((parse_qs(urlparse(self.path).query).get("hz") or ["140"])[0])})
+            except ValueError:
+                return self.send(400, {"error": "hz"})
         if path == "/api/nowplaying/cover":
             c = NP.cover((parse_qs(urlparse(self.path).query).get("track") or [""])[0])
             return self.send(200, c[0], c[1]) if c else self.send(404, {"error": "no cover"})
@@ -240,6 +246,13 @@ class Handler(BaseHTTPRequestHandler):
                 url = (parse_qs(urlparse(self.path).query).get("u") or [""])[0]
                 data, ctype = CS.fetch_image(url)
                 return self.send(200, data, ctype)
+            except Exception as e:
+                return self.send(502, {"error": str(e)})
+        if path == "/api/cover/motion":                # the moving cover of an Apple Music album, as an MP4 file
+            try:
+                q = parse_qs(urlparse(self.path).query)
+                data = CS.fetch_motion((q.get("id") or [""])[0], (q.get("cc") or [""])[0])
+                return self.send(200, data, "video/mp4") if data else self.send(404, {"error": "这张专辑没有动态封面"})
             except Exception as e:
                 return self.send(502, {"error": str(e)})
         # the page and its files, from web/ only

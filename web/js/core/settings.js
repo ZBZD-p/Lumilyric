@@ -35,7 +35,7 @@ export {
 /* Effect settings (fx), exit presets, karaoke timing, glow */
 /* effect settings, shared by live playback and video export */
 const ALIGNS = /^(left|center|right)$/;
-const FX_DEFAULT = { langSwitch: true, ui: 'glass', render: 'webgl', layout: 'scroll', scrollDrag: 2, scrollBlur: 1, scrollAlign: 'center', scrollAlignCover: 'left', wordAnim: 'pop', showFps: false, perfPos: 'tc', perfSize: 1, cover: true, anim: 'pop', exit: 'float', exitDur: 0.75, font: { main: { zh: '', en: '', bold: true, s: 1 }, sub: { zh: '', en: '', bold: false, s: 1 } }, bg: { mode: 'flow', speed: 1, dim: 0.3, sat: 1.5, colors: 5, grain: 0, style: 'cover', pulse: 0.5, pulseMode: 'breath' }, glow: { on: true, style: 'soft', strength: 0.2, radius: 0.3, color: '#ffffff', thresh: 0.5, hold: 1, holdFrom: 0.8 } };
+const FX_DEFAULT = { langSwitch: true, ui: 'glass', render: 'webgl', layout: 'scroll', scrollDrag: 2, scrollBlur: 1, scrollAlign: 'center', scrollAlignCover: 'left', wordAnim: 'pop', showFps: false, perfPos: 'tc', perfSize: 1, cover: true, anim: 'pop', exit: 'float', exitDur: 0.75, font: { main: { zh: '', en: '', bold: true, s: 1 }, sub: { zh: '', en: '', bold: false, s: 1 } }, bg: { mode: 'flow', speed: 1, dim: 0.3, sat: 1.5, colors: 5, grain: 0, style: 'cover', pulse: 0.5, pulseMode: 'breath', pulseHz: 140, pulseGate: 0, coverLive: false, coverLiveGlide: 0.12 }, glow: { on: true, style: 'soft', strength: 0.2, radius: 0.3, color: '#ffffff', thresh: 0.5, hold: 1, holdFrom: 0.8 } };
 const ANIMS = ['pop', 'karaoke', 'fade', 'rise'];
 /* exit presets. line: the whole line leaves at once; otherwise the words leave one after another.
    dy in em (negative = up), sc = scale change, blur in px at 72 px type */

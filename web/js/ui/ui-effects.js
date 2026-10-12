@@ -3,8 +3,8 @@ import { $, lrcName, lrcSong, setCur, song } from '../core/lyrics.js';
 import { ANIMS, FX_DEFAULT, assignFx, exitSpec, findIdx, fx, glowCss, glowGain, lt, lyricDelay, now, scrollAlignKey, seek, setPlaying } from '../core/settings.js';
 import { render, segCache, segmentsFor } from '../render/view-dom.js';
 import { cubicBezier } from '../render/text-canvas.js';
-import { GRAIN, bassBusy, bassEnv, coverBmp, coverLabel, coverURL, curPalette, followBassOn, liveGLVer, setBgDirty, setLiveGLLast, setLiveGLVer } from '../background/background.js';
-import { coverSide, imageSide, setCover } from '../background/cover-extract.js';
+import { GRAIN, bassBuild, bassBusy, bassEnv, coverBmp, coverLabel, coverURL, curPalette, followBassOn, liveGLVer, setBgDirty, setLiveGLLast, setLiveGLVer } from '../background/background.js';
+import { coverSide, imageSide, setCover, setCoverVideo } from '../background/cover-extract.js';
 import { useWebGL } from '../render/bloom.js';
 import { WORD_ANIMS } from '../render/layout-words.js';
 import { layoutChange, setCoverPanelDirty } from '../render/frame.js';
@@ -67,17 +67,24 @@ function applyFx(){
   $('fxBgSec').classList.toggle('flow', bg.mode === 'flow');
   $('fxBgSec').classList.toggle('blobs', bg.style === 'blobs');
   document.querySelectorAll('#fxBg button').forEach(b => b.setAttribute('aria-pressed', b.dataset.bg === bg.mode && (bg.mode !== 'flow' || b.dataset.style === (bg.style || 'cover'))));
+  $('fxBgCoverLive').checked = !!bg.coverLive;
+  { const g = isFinite(+bg.coverLiveGlide) ? Math.min(1, Math.max(0, +bg.coverLiveGlide)) : 0.12;
+    $('fxBgCoverGlide').value = g; $('fxBgCoverGlideV').textContent = g > 0.005 ? g.toFixed(2) + ' s' : '立刻';
+    $('fxBgCoverGlideRow').hidden = !bg.coverLive; }
   $('fxBgSpeed').value = Math.round(bg.speed * 100); $('fxBgSpeedV').textContent = bg.speed.toFixed(2) + '×';
   $('fxBgDim').value = Math.round(bg.dim * 100); $('fxBgDimV').textContent = Math.round(bg.dim * 100) + '%';
   document.querySelectorAll('#fxBgPulseMode button').forEach(b => b.setAttribute('aria-pressed', b.dataset.pm === (bg.pulseMode || 'breath')));
   $('fxBgPulse').value = Math.round(bg.pulse * 100); $('fxBgPulseV').textContent = Math.round(bg.pulse * 100) + '%';
+  { const hz = Math.min(300, Math.max(40, +bg.pulseHz || 140)), g = Math.min(0.9, Math.max(0, +bg.pulseGate || 0));
+    $('fxBgPulseHz').value = hz; $('fxBgPulseHzV').textContent = hz + ' Hz 以下';
+    $('fxBgPulseGate').value = Math.round(g * 100); $('fxBgPulseGateV').textContent = g > 0 ? Math.round(g * 100) + '%' : '关'; }
   $('fxBgPulseNote').textContent = bassBusy ? '正在分析音频的低音…' : followBassOn() ? '跟随播放器：背景跟着电脑正在播放的声音动' : bassEnv ? '' : '载入音频后，背景会跟着低音动起来';
   $('fxBgPulseNote').hidden = !$('fxBgPulseNote').textContent;
   $('fxBgColors').value = bg.colors; $('fxBgColorsV').textContent = bg.colors + ' 种';
   $('fxBgGrain').value = (bg.grain * 100).toFixed(1); $('fxBgGrainV').textContent = (bg.grain * 100).toFixed(1).replace(/\.0$/, '') + '%';
   document.documentElement.style.setProperty('--grain', String(bg.grain));
   $('bgGrain').style.backgroundSize = (128 / (devicePixelRatio || 1)) + 'px';     // one grain dot per screen pixel
-  ['fxBgSpeed', 'fxBgDim', 'fxBgColors', 'fxBgGrain', 'fxBgPulse'].forEach(id => { const el = $(id); el.style.setProperty('--p', ((el.value - el.min) / (el.max - el.min) * 100) + '%'); });
+  ['fxBgSpeed', 'fxBgDim', 'fxBgColors', 'fxBgGrain', 'fxBgPulse', 'fxBgPulseHz', 'fxBgPulseGate', 'fxBgCoverGlide'].forEach(id => { const el = $(id); el.style.setProperty('--p', ((el.value - el.min) / (el.max - el.min) * 100) + '%'); });
   if (coverURL) $('fxCoverImg').src = coverURL; else $('fxCoverImg').removeAttribute('src');
   $('fxCoverName').textContent = coverBmp ? coverLabel : '还没有封面，先用默认配色';
   $('fxPal').innerHTML = curPalette().map(c => `<i style="background:rgb(${c.join(',')})"></i>`).join('');
@@ -131,7 +138,15 @@ document.querySelectorAll('#fxBg button').forEach(b => b.onclick = () => { fx.bg
 $('fxBgSpeed').oninput = e => { fx.bg.speed = e.target.value / 100; saveFx(); applyFx(); };
 $('fxBgDim').oninput = e => { fx.bg.dim = e.target.value / 100; saveFx(); applyFx(); };
 document.querySelectorAll('#fxBgPulseMode button').forEach(b => b.onclick = () => { fx.bg.pulseMode = b.dataset.pm; saveFx(); applyFx(); });
+$('fxBgCoverLive').onchange = e => { fx.bg.coverLive = e.target.checked; saveFx(); applyFx(); };
+$('fxBgCoverGlide').oninput = e => { fx.bg.coverLiveGlide = +e.target.value; saveFx(); applyFx(); };
 $('fxBgPulse').oninput = e => { fx.bg.pulse = e.target.value / 100; saveFx(); applyFx(); };
+let pulseHzT = 0;                                       // 低音范围: the song's pulse is worked out again, the helper told (a moment after the last change)
+$('fxBgPulseHz').oninput = e => {
+  fx.bg.pulseHz = +e.target.value; saveFx(); applyFx();
+  clearTimeout(pulseHzT); pulseHzT = setTimeout(() => { bassBuild(); if (typeof late.followBassCut === 'function') late.followBassCut(); }, 250);
+};
+$('fxBgPulseGate').oninput = e => { fx.bg.pulseGate = e.target.value / 100; saveFx(); applyFx(); };
 $('fxBgColors').oninput = e => { fx.bg.colors = +e.target.value; saveFx(); applyFx(); };
 $('fxBgGrain').oninput = e => { fx.bg.grain = e.target.value / 100; saveFx(); applyFx(); };
 /* cover search through the local helper (it downloads the images, so there are no cross-site problems) */
@@ -166,7 +181,8 @@ async function coverSearch(){
       const t = document.createElement('b'); t.textContent = it.title || '（无标题）';
       const a = document.createElement('span'); a.textContent = [it.source, it.artist].filter(Boolean).join(' · ');
       b.append(img, t, a);
-      b.title = `${it.title} — ${it.artist}（${it.source}）`;
+      if (it.motion){ const m = document.createElement('i'); m.className = 'covmotion'; m.textContent = '动态'; b.appendChild(m); }      // Apple Music: this album's cover moves
+      b.title = `${it.title} — ${it.artist}（${it.source}）` + (it.motion ? ' · 有动态封面，点了会下载那段视频' : '');
       b.onclick = () => coverPick(it);
       $('coverRes').appendChild(b);
     }
@@ -209,6 +225,17 @@ $('coverAskNo').onclick = closeCoverAsk;
 $('coverAskYes').onclick = () => { const it = coverAskPick; coverAskPick = null; closeCoverAsk(); if (it) coverPick(it, true); else openCoverSearch(); };
 $('coverAsk').addEventListener('click', e => { if (e.target === $('coverAsk')) closeCoverAsk(); });
 async function coverPick(it, onlyIfSharper){
+  if (it.motion && it.am && !onlyIfSharper){            // a moving cover (Apple Music): the video; the picture if that fails
+    $('coverMsg').textContent = '正在下载动态封面（十几 MB，要等几秒）…';
+    try {
+      const r = await fetch(`/api/cover/motion?id=${encodeURIComponent(it.am[0])}&cc=${encodeURIComponent(it.am[1])}`);
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      if (!await setCoverVideo(await r.blob(), `${it.title} · ${it.source}（动态）`)) throw new Error('视频读不了');
+      if (fx.bg.mode !== 'flow'){ fx.bg.mode = 'flow'; saveFx(); applyFx(); }
+      $('coverModal').hidden = true;
+      return;
+    } catch (err){ $('status').textContent = '动态封面没下载成（' + (err.message || err) + '），用了静态的那张'; }
+  }
   $('coverMsg').textContent = '正在下载大图…';
   try {
     const r = await fetch(coverImgURL(it.full));
@@ -233,7 +260,8 @@ $('coverModal').addEventListener('click', e => { if (e.target === $('coverModal'
 $('coverQ').addEventListener('keydown', e => { if (e.key === 'Enter'){ e.preventDefault(); coverSearch(); } });
 $('coverFile').onchange = async e => {
   const f = e.target.files[0]; if (!f) return;
-  if (!await setCover(f, f.name)) $('status').textContent = '这张图片读不了，换一张试试';
+  const video = /^video\//.test(f.type) || /\.(mp4|m4v|mov|webm)$/i.test(f.name);       // a moving cover
+  if (!await (video ? setCoverVideo(f, f.name) : setCover(f, f.name))) $('status').textContent = video ? '这个视频读不了，换成 MP4（H.264）或 WebM 试试' : '这张图片读不了，换一张试试';
   else if (fx.bg.mode !== 'flow'){ fx.bg.mode = 'flow'; saveFx(); applyFx(); }
   e.target.value = '';
 };

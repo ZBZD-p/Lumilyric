@@ -2,8 +2,8 @@ import { late } from '../core/late.js';
 import { $, assignPlaying, audio, lrcName, lrcSong, playing, setAlignStats, setAudio, setBase, setLrcName, setLrcRawText, setLrcSong, setStartPerf, setWhisperWords, song } from '../core/lyrics.js';
 import { fx, lyricDelay, total } from '../core/settings.js';
 import { render } from '../render/view-dom.js';
-import { setBgDirty } from '../background/background.js';
-import { coverSide, imageSide, setCover } from '../background/cover-extract.js';
+import { pulseGate, pulseHz, setBgDirty } from '../background/background.js';
+import { coverSide, coverVideo, imageSide, setCover, setCoverVideo } from '../background/cover-extract.js';
 import { createSongFlow } from '../render/song-transition.js';
 import { songStage, useScroll } from '../render/layout-scroll.js';
 import { exporting, setDelay } from '../export/export.js';
@@ -83,7 +83,9 @@ function followApply(s){
   if (was.trackId !== F.trackId){ followCoverVer = s.coverVer || 0; followTrack(s); }
   else if (s.coverVer && s.coverVer !== followCoverVer){      // the player attached or changed its picture later
     followCoverVer = s.coverVer;
-    followCover(s, ++followCoverSeq);
+    // ... which starts the cover over, unless this song's moving cover is up already: the late picture would take
+    // its place for a moment, only for the same moving cover to be found and put back
+    if (!(followMoving && followMoving.tid === s.trackId && followMoving.el === coverVideo)) followCover(s, ++followCoverSeq);
   }
   else if (!prev || prev.app !== s.app || prev.timeline !== s.timeline) followStatus();
   $('seek').disabled = s.timeline !== false;
@@ -229,24 +231,63 @@ function coverMatch(it, s){
   const exact = s.album ? ra === 1 : rn === 1;
   return Math.round(Math.min(100, art * 50 + pts + (art === 1 && exact ? 10 : 0)));
 }
+/* the covers found for the song now playing: searched once per song, for the moving cover (followMotion) and for a
+   sharper picture (followCoverSuggest). Gives the song with its album filled in and the results, or null when the
+   song has changed meanwhile. */
+let followFound = { my: 0, p: null };
+function followCoverItems(s, my){
+  if (followFound.my !== my) followFound = { my, p: (async () => {
+    // some players (Kugou) give no album: use the one from the lyrics search, waiting for it at most 8 s
+    await Promise.race([followLyrWait, new Promise(r => setTimeout(r, 8000))]);
+    if (my !== followCoverSeq || !followOn) return null;
+    s = { ...s, album: s.album || followAlbum || (lrcSong && lrcSong.meta && lrcSong.meta.al) || '' };
+    // the album name is the better thing to search for; the song name finds singles. Both, album results first.
+    const queries = [];
+    if (s.album) queries.push([cvClean(s.album).trim() || s.album, s.artist].filter(Boolean).join(' '));
+    queries.push([cvClean(s.title).trim() || s.title, s.artist].filter(Boolean).join(' '));
+    const got = await Promise.all([...new Set(queries)].map(q =>
+      api('/api/cover/search', JSON.stringify({ q }), { 'Content-Type': 'application/json' }).then(t => JSON.parse(t).items || []).catch(() => [])));
+    if (my !== followCoverSeq || !followOn) return null;
+    const seen = new Set(), items = [];
+    for (let i = 0; ; i++){                                  // interleave the lists so each one's best come first
+      let any = false;
+      for (const L of got) if (i < L.length){ any = true; if (!seen.has(L[i].key)){ seen.add(L[i].key); items.push(L[i]); } }
+      if (!any) break;
+    }
+    return { s, items };
+  })() };
+  return followFound.p;
+}
+/* A moving cover (Apple Music, see cover_search.py) comes before any picture: when the song's album has one, it is
+   used without asking. Only for a certain match, and only while the cover is shown at all (it is a download of some
+   ten MB, kept on disk afterwards). "(Explicit)" / "[Clean]" in the player's album name is the same album, and the
+   same cover. Returns true when the moving cover is in place. */
+let followMoving = null;                           // { tid, el }: the song whose moving cover was put up, and that video
+const cvTags = t => String(t || '').replace(/[\(（\[【]\s*(explicit|clean)\s*[\)）\]】]/ig, ' ').trim();
+async function followMotion(s0, my){
+  if (!fx.cover) return false;
+  const f = await followCoverItems(s0, my);
+  if (!f || my !== followCoverSeq || !followOn) return false;
+  const s = { ...f.s, album: cvTags(f.s.album), title: cvTags(f.s.title) };
+  const pick = f.items.filter(it => it.motion && it.am).map(it => ({ it, sc: coverMatch(it, s) })).filter(x => x.sc > COVER_AUTO).sort((a, b) => b.sc - a.sc)[0];
+  if (!pick) return false;
+  try {
+    const r = await fetch(`/api/cover/motion?id=${encodeURIComponent(pick.it.am[0])}&cc=${encodeURIComponent(pick.it.am[1])}`);
+    if (!r.ok) return false;
+    const blob = await r.blob();
+    if (my !== followCoverSeq || !followOn) return false;
+    if (!await setCoverVideo(blob, `${pick.it.title} · ${pick.it.source}（动态）`)) return false;
+    followMoving = { tid: s0.trackId, el: coverVideo };
+    followLyr = (followLyr ? followLyr + ' · ' : '') + `封面已换成 ${pick.it.source} 的动态封面（匹配度 ${pick.sc}%）`;
+    followStatus();
+    return true;
+  } catch (e){ return false; }
+}
 async function followCoverSuggest(s, my, hadCover){
-  // some players (Kugou) give no album: use the one from the lyrics search, waiting for it at most 8 s
-  await Promise.race([followLyrWait, new Promise(r => setTimeout(r, 8000))]);
-  if (my !== followCoverSeq || !followOn) return;
-  s = { ...s, album: s.album || followAlbum || (lrcSong && lrcSong.meta && lrcSong.meta.al) || '' };
-  // the album name is the better thing to search for; the song name finds singles. Both, album results first.
-  const queries = [];
-  if (s.album) queries.push([cvClean(s.album).trim() || s.album, s.artist].filter(Boolean).join(' '));
-  queries.push([cvClean(s.title).trim() || s.title, s.artist].filter(Boolean).join(' '));
-  const got = await Promise.all([...new Set(queries)].map(q =>
-    api('/api/cover/search', JSON.stringify({ q }), { 'Content-Type': 'application/json' }).then(t => JSON.parse(t).items || []).catch(() => [])));
-  if (my !== followCoverSeq || !followOn) return;
-  const seen = new Set(), items = [];
-  for (let i = 0; ; i++){                                  // interleave the lists so each one's best come first
-    let any = false;
-    for (const L of got) if (i < L.length){ any = true; if (!seen.has(L[i].key)){ seen.add(L[i].key); items.push(L[i]); } }
-    if (!any) break;
-  }
+  const f = await followCoverItems(s, my);
+  if (!f || my !== followCoverSeq || !followOn) return;
+  s = f.s;
+  const items = f.items;
   // every result is scored; the best few are downloaded and measured, and the best one that is really sharper than
   // the cover in use wins (the top scorer may be a small picture while an equally good one is large)
   const ranked = items.map(it => ({ it, sc: coverMatch(it, s) })).filter(x => x.sc >= COVER_ASK)
@@ -303,6 +344,8 @@ async function followCover(s, my){
       } catch(e){}
       await setCover(blob, '播放器封面');
     }
+    if (my !== followCoverSeq || !followOn) return;
+    if (await followMotion(s, my)) return;                 // a moving cover, when the album has one, before any picture
     if (small && my === followCoverSeq && followOn) await followCoverSuggest(s, my, !!blob);
   } catch (e){}
 }
@@ -321,6 +364,7 @@ function followOpen(){
   const app = localStorage.getItem('lrc-follow-app') || '';
   const es = followES = new EventSource('/api/nowplaying/stream' + (app ? '?app=' + encodeURIComponent(app) : ''));
   const mine = () => followES === es && followOn;
+  followBassCut();
   es.onopen = () => { followErr = 0; };
   es.addEventListener('np', e => { followErr = 0; if (mine()) try { followSnapshot(JSON.parse(e.data)); } catch(err){} });
   es.addEventListener('bass', e => { if (mine()) try { followBass(JSON.parse(e.data)); } catch(err){} });
@@ -377,7 +421,12 @@ function followBassAt(){
   while (i > 0 && bassQ[i][0] > t) i--;
   const a = bassQ[i], b = bassQ[Math.min(i + 1, bassQ.length - 1)];
   const f = b[0] > a[0] ? Math.max(0, Math.min(1, (t - a[0]) / (b[0] - a[0]))) : 0;
-  return (a[k] + (b[k] - a[k]) * f) * fx.bg.pulse;
+  return pulseGate(a[k] + (b[k] - a[k]) * f) * fx.bg.pulse;
+}
+/* 低音范围: the helper measures the live sound, so it is told what counts as bass (when following starts, and when
+   the setting changes). An older helper does not know the address and goes on with 140 Hz. */
+function followBassCut(){
+  if (followOn) fetch('/api/nowplaying/bass/cut?hz=' + pulseHz()).catch(() => {});
 }
 function followBass(j){
   if (j.ok === false){ bassLive = false; return; }          // not installed: no pulse, nothing else is affected
@@ -438,7 +487,7 @@ addEventListener('pagehide', () => {         // the per-player offset must not b
 });
 
 /* names that modules loaded before this one call or read (core/late.js) */
-Object.assign(late, { followNow, followTotal, followControl, followSeek, followBassLive, followBassAt, followSaveCover, followInit });
+Object.assign(late, { followNow, followTotal, followControl, followSeek, followBassLive, followBassAt, followBassCut, followSaveCover, followInit });
 Object.defineProperties(late, {
   followOn: { get: () => followOn, enumerable: true },
   F: { get: () => F, enumerable: true },

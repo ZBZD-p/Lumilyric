@@ -3,7 +3,7 @@ Live low-frequency level of whatever the PC is playing, for the page's backgroun
 player (there is no audio file to analyse then).
 
 Uses WASAPI loopback through PyAudioWPatch (about 100 KB, installed by setup_nowplaying.bat); the arithmetic is
-plain Python (array + sum), no numpy. Only a number per 10 ms is computed (the loudness below ~140 Hz); no audio is stored or sent anywhere. Capture runs only
+plain Python (array + sum), no numpy. Only a number per 10 ms is computed (the loudness below CUT, ~140 Hz unless the page sets another); no audio is stored or sent anywhere. Capture runs only
 while the page asks for it and stops 15 s after the last request.
 
 LRC_NOWPLAYING_MOCK=1 synthesises a 120 BPM kick instead.
@@ -21,12 +21,20 @@ import push
 
 MOCK = bool(os.environ.get("LRC_NOWPLAYING_MOCK"))
 RATE = 100                              # values per second
+CUT = 140.0                             # Hz: what counts as bass (the page's 低音范围 setting, set_cut)
 IDLE_STOP = 15.0
 _buf = collections.deque(maxlen=RATE * 6)      # (wall ms, level)
 _lock = threading.Lock()
 _last_req = 0.0
 _thread = None
 _reason = ""
+
+
+def set_cut(hz):
+    """What counts as bass: everything below hz. Takes effect at once, also while capturing."""
+    global CUT
+    CUT = min(300.0, max(40.0, float(hz)))
+    return CUT
 
 
 def available():
@@ -79,11 +87,10 @@ def _capture():
         dev = _loopback(pa, p)
         ch, rate = int(dev["maxInputChannels"]), int(dev["defaultSampleRate"])
         k = max(1, rate // 1000)                    # block-average down to ~1 kHz, then two one-pole low-passes
-        a = math.exp(-2 * math.pi * 140 / (rate / k))
         st = {"y1": 0.0, "y2": 0.0}
 
         def cb(data, frames, ti, status):
-            v = level(data, ch, k, a, st)
+            v = level(data, ch, k, math.exp(-2 * math.pi * CUT / (rate / k)), st)      # CUT may change while capturing
             if v is not None:
                 with _lock:
                     _buf.append((int(time.time() * 1000), round(v, 5)))

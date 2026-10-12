@@ -162,7 +162,7 @@ def _mock_update():
         pos = MOCK_SONG - 1.0                  # the previous song's end, stamped as fresh
     raw = {"app": app, "appName": "模拟播放器", "title": title, "artist": artist, "album": album,
            "dur": MOCK_SONG, "pos0": pos, "lu": lu, "read_at": now, "playing": _mock["playing"],
-           "tid": track_id(app, title, artist, album), "timeline": True}
+           "tid": track_id(app, title, artist, album), "timeline": True, "canSeek": True}
     _feed(raw, now)
     with _LOCK:
         _ORDER[:] = [app]
@@ -230,10 +230,15 @@ async def _read_session(s):
     now = time.time()
     tid = track_id(app, title, artist, album)
     await _watch_cover(app, tid, props, now)
+    pb = s.get_playback_info()
+    try:
+        can_seek = bool(pb.controls.is_playback_position_enabled)      # the player accepts "jump to a position"
+    except Exception:
+        can_seek = False
     return {"app": app, "appName": app_info(app)[0], "title": title, "artist": artist, "album": album,
             "dur": dur, "pos0": tl.position.total_seconds(), "lu": lu_ts, "read_at": now,
-            "playing": int(s.get_playback_info().playback_status) == 4,       # 4 PLAYING, 5 PAUSED
-            "tid": tid, "timeline": dur > 0 or lu_ts is not None}
+            "playing": int(pb.playback_status) == 4,       # 4 PLAYING, 5 PAUSED
+            "tid": tid, "timeline": dur > 0 or lu_ts is not None, "canSeek": can_seek}
 
 
 def _subscribe(mgr, wake, loop, subs):
@@ -376,7 +381,8 @@ def snapshot(app=""):
         return {"ok": True, "app": m["app"], "appName": m["appName"], "title": m["title"], "artist": m["artist"],
                 "album": m["album"], "duration": round(st.duration(now), 2), "position": round(st.position(now), 3),
                 "playing": m["playing"], "at": int(now * 1000), "trackId": m["tid"], "settled": st.settled,
-                "timeline": st.raw["timeline"], "coverVer": _COVER_VER.get(m["tid"], 0),
+                "timeline": st.raw["timeline"], "canSeek": bool(st.raw.get("canSeek")),
+                "coverVer": _COVER_VER.get(m["tid"], 0),
                 "sessions": [{"app": x["app"], "appName": x["appName"], "title": x["title"], "playing": x["playing"]}
                              for x in metas]}
 

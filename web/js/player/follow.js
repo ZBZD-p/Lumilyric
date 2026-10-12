@@ -42,14 +42,35 @@ function followLoad(text, name, note){
   followQuiet = true;
   try { return late.loadLRCText(text, name, note); } finally { followQuiet = false; }
 }
+/* Dragging the bar. Two kinds of players can be dragged (see followApply's $('seek').disabled):
+   - canSeek (Spotify): the player accepts "jump to a position", so we tell it to, and it really moves.
+   - no timeline (Kugou): the player keeps its own clock and gives no position, so we only calibrate our own
+     count to where the song actually is.
+   Either way the lyrics follow the finger at once; the network command is sent once dragging settles, so a drag
+   that sweeps across the bar does not fire a seek on every step. */
+let followSeekT = 0;
 function followSeek(t){
   if (followQuiet){ render(true); return; }          // applySource() seeks to 0 after loading lyrics: not a user drag
-  if (!followInfo || followInfo.timeline !== false){ render(true); return; }
+  if (!followInfo){ render(true); return; }
+  const canSeek = !!followInfo.canSeek, noTimeline = followInfo.timeline === false;
+  if (!canSeek && !noTimeline){ render(true); return; }   // player won't take a seek and keeps its own clock
   t = Math.max(0, Math.min(followTotal(), t));
   F.pos = t; F.at = Date.now(); followCorr = 0;
+  followCalAt = Date.now();                               // ignore snapshots computed before this move
   render(true);
-  api('/api/nowplaying/calibrate', JSON.stringify({ app: followInfo.app, trackId: F.trackId, position: t }), { 'Content-Type': 'application/json' })
-    .then(() => { followCalAt = Date.now(); }).catch(() => {});
+  clearTimeout(followSeekT);
+  followSeekT = setTimeout(() => {
+    followSeekT = 0;
+    if (!followOn || !followInfo) return;
+    followCalAt = Date.now();
+    if (canSeek)
+      api('/api/nowplaying/control', JSON.stringify({ action: 'seek', position: t, app: followInfo.app }), { 'Content-Type': 'application/json' })
+        .then(txt => { const r = JSON.parse(txt); if (!r.ok) $('status').textContent = (followInfo.appName || '播放器') + ' 没有执行跳转' + (r.reason ? '：' + r.reason : ''); })
+        .catch(e => { $('status').textContent = '跳转失败：' + e.message; });
+    else
+      api('/api/nowplaying/calibrate', JSON.stringify({ app: followInfo.app, trackId: F.trackId, position: t }), { 'Content-Type': 'application/json' })
+        .then(() => { followCalAt = Date.now(); }).catch(() => {});
+  }, 140);
 }
 
 /* ---- remote control: play, pause, previous, next on the player being followed (Windows' media session; the same
@@ -102,7 +123,7 @@ function followApply(s){
     if (!(followMoving && followMoving.tid === s.trackId && followMoving.el === coverVideo)) followCover(s, ++followCoverSeq);
   }
   else if (!prev || prev.app !== s.app || prev.timeline !== s.timeline) followStatus();
-  $('seek').disabled = s.timeline !== false;
+  $('seek').disabled = !(s.canSeek || s.timeline === false);   // Spotify accepts a seek; Kugou has no clock of its own to fight
   followSessions(s);
   followDelay(s.app);
 }

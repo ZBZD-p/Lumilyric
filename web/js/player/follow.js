@@ -56,6 +56,7 @@ function followSeek(t){
    thing the keyboard's media keys reach). What the player then does comes back like any other change. */
 function followControl(action){
   if (!followOn || !followInfo) return;
+  if (action === 'pause') pauseAsked = performance.now() + 1500;      // pressed here: shown at once (see pauseT)
   api('/api/nowplaying/control', JSON.stringify({ action, app: followInfo.app }), { 'Content-Type': 'application/json' })
     .then(txt => { const r = JSON.parse(txt); if (!r.ok) $('status').textContent = (followInfo.appName || '播放器') + ' 没有执行这个操作' + (r.reason ? '：' + r.reason : ''); })
     .catch(e => { $('status').textContent = '控制播放器失败：' + e.message; });
@@ -63,6 +64,11 @@ function followControl(action){
 $('prevBtn').onclick = () => followControl('prev');
 $('nextBtn').onclick = () => followControl('next');
 
+/* "Paused" is shown only once it has lasted a moment (PAUSE_HOLD). Changing songs, a player reports itself paused for
+   an instant between the two, and the button would flash to "play" and back. A pause asked for with the page's own
+   button (pauseAsked) is shown at once; "playing" always is. */
+const PAUSE_HOLD = 450;                               // ms
+let pauseT = 0, pauseAsked = 0;
 function setPlayIcon(p){
   $('icon').innerHTML = p ? '<path d="M6 4h4v16H6zM14 4h4v16h-4z"/>' : '<path d="M7 4.5v15l13-7.5z"/>';
   $('play').setAttribute('aria-label', p ? '暂停' : '播放');
@@ -79,7 +85,15 @@ function followApply(s){
   const jump = Math.abs(tNew - shown) > FOLLOW_JUMP || was.playing !== F.playing || was.trackId !== F.trackId;
   followCorr = jump ? 0 : shown - tNew;
   followCorrT = performance.now();
-  if (playing !== F.playing){ assignPlaying(F.playing); setPlayIcon(playing); late.poke(); }
+  if (F.playing || performance.now() < pauseAsked){
+    clearTimeout(pauseT); pauseT = 0;
+    if (playing !== F.playing){ assignPlaying(F.playing); setPlayIcon(playing); late.poke(); }
+  } else if (playing && !pauseT){
+    pauseT = setTimeout(() => {
+      pauseT = 0;
+      if (followOn && !F.playing && playing){ assignPlaying(false); setPlayIcon(false); late.poke(); }
+    }, PAUSE_HOLD);
+  }
   if (was.trackId !== F.trackId){ followCoverVer = s.coverVer || 0; followTrack(s); }
   else if (s.coverVer && s.coverVer !== followCoverVer){      // the player attached or changed its picture later
     followCoverVer = s.coverVer;
@@ -293,7 +307,8 @@ async function followMotion(s0, my){
 async function followCoverSuggest(s, my, hadCover){
   const f = await followCoverItems(s, my);
   if (!f || my !== followCoverSeq || !followOn) return;
-  s = f.s;
+  // "(Explicit)" / "[Clean]" in the player's names is the same album with the same cover: not a different edition
+  s = { ...f.s, album: cvTags(f.s.album), title: cvTags(f.s.title) };
   const items = f.items;
   // every result is scored; the best few are downloaded and measured, and the best one that is really sharper than
   // the cover in use wins (the top scorer may be a small picture while an equally good one is large)

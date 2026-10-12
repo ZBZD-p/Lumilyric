@@ -104,7 +104,7 @@
   <div class="panel askpanel" role="dialog" aria-modal="true" aria-labelledby="coverAskTitle">
     <div class="askrow"><img id="coverAskImg" alt="">
       <div><h2 id="coverAskTitle">找到了封面</h2><p class="note" id="coverAskMsg"></p></div></div>
-    <div class="actions"><button class="btn" id="coverAskNo">不用了</button><button class="btn btn-solid" id="coverAskYes">选择封面</button></div>
+    <div class="actions"><button class="btn" id="coverAskNo" title="到时间没有选，就当作不用">不用了<span class="asksecs" id="coverAskSecs" aria-hidden="true"></span></button><button class="btn btn-solid" id="coverAskYes">选择封面</button></div>
   </div>
 </div>
 
@@ -198,6 +198,7 @@
         <div class="seg" role="group" aria-label="滚动歌词对齐" id="fxAlign">
           <button data-al="left" title="每一行都从同一条左边线开始">靠左</button>
           <button data-al="center" title="每一行都以中轴线为中心，左右对称">居中</button>
+          <button data-al="right" title="每一行都在同一条右边线结束">靠右</button>
         </div><span></span></div>
       <div class="fxrow" id="fxDragRow" title="换句时下面的歌词跟上来的延迟：0 = 整列一起移动，越大越像被拖着、一行接一行地跟上"><label for="fxDrag">拖拽感</label><input type="range" id="fxDrag" min="0" max="300" step="10"><output id="fxDragV"></output></div>
       <div class="fxrow" id="fxBlurRow" title="当前句以外的歌词有多模糊：0 = 所有歌词都清晰，100% 是原来的效果，越大离当前句越远的歌词越朦胧"><label for="fxBlur">模糊</label><input type="range" id="fxBlur" min="0" max="300" step="10"><output id="fxBlurV"></output></div>

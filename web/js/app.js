@@ -1,6 +1,7 @@
 /* Entry point: index.html loads only this file (after vendor/mp4-muxer.js). Every module is listed here in the order
    the page used to load its scripts in; each module imports only modules that come before it in this list (a name from
    a later one goes through `late`, core/late.js), so the modules run exactly in this order. */
+import './core/glide.js';
 import './core/core.js';
 import './core/lyrics.js';
 import './core/settings.js';
@@ -27,6 +28,7 @@ import './glass/seg-thumb.js';
 import './glass/glass-toggle.js';
 import './glass/glass-slider.js';
 import './ui/dropdown.js';
+import './ui/tooltip.js';
 import './render/smooth-scroll.js';
 import './ui/menu.js';
 import './ui/desktop.js';

@@ -1,6 +1,6 @@
 import { late } from '../core/late.js';
 import { $, mode, song } from '../core/lyrics.js';
-import { fx, hexRGB, lt, now } from '../core/settings.js';
+import { COVER_GLIDE, coverGlideNow, fx, hexRGB, lt, now } from '../core/settings.js';
 import { oneLine } from '../render/view-dom.js';
 import { buildTimeline, canvasMeasurer } from '../render/text-canvas.js';
 import { createLookMelt } from './look-melt.js';
@@ -442,11 +442,41 @@ function drawLiveBg(){
 
 /* live page in WebGL mode: the same canvas drawing as the export, at screen resolution, through the bloom */
 let liveBloom, liveGLx = null, liveGLKey = '', liveGLLast = '', liveGLVer = 0;
+/* 显示封面 switched on or off: the lyrics are laid out anew for their new area at once, but drawn where they were, and
+   glide from there to their place. The cover moves first (coverSlide, frame.js; .covpanel in style.css); the lyrics
+   stay put for a moment and then follow as if it pulled them along: off gently, then a long soft landing (COVER_GLIDE
+   in settings.js). They only move: nothing fades. The rows of the scrolling column change their alignment in the
+   same glide (scrollAlignNow, layout-scroll.js). It has a speed (coverGlideNow, settings.js), so switching again
+   while it is under way, even several times quickly, carries on from where the lyrics are: no jump, no stalling.
+   liveAt: the lyrics' own place in the last frame (their anchor, late.lyricAnchor, in window px).
+   liveK: how far from their place the lyrics are drawn for each unit of the change still to come (drawn at
+   place + liveK * u). Set anew at every switch so that they are drawn exactly where they were just before it. */
+let liveCover = null, liveAt = null, liveK = { x: 0, y: 0 };
+/* the place itself moves during the glide (the rows of the column re-align with it): liveU is u in the last frame and
+   liveS how far the place moves per unit of u, measured from the last two frames, so that "where they were" can be
+   said for this very moment and not for a frame ago (at speed that is ten pixels) */
+let liveU = 0, liveS = { x: 0, y: 0 };
 function drawLiveGL(){
   late.updateCoverPanel();
   const on = late.useWebGL() || late.useScroll() || late.useWordMode() || late.useCoverPanel() || fx.ui === 'glass' || !!late.layoutTrStep();   // glass refracts the lyrics, so they go on the canvas          // scrolling column / cover layout are always drawn on the canvas
   document.body.classList.toggle('webgl', on && liveBloom !== null);
-  if (!on) return;
+  const cover = !!fx.cover, turned = liveCover !== null && cover !== liveCover, cg = coverGlideNow(performance.now());
+  const uWas = turned ? cg.u - ((liveCover ? 1 : 0) - cg.to) : cg.u;      // what was still to come just before this switch
+  const from = turned && liveAt && !matchMedia('(prefers-reduced-motion:reduce)').matches ? { x: liveAt.x + liveS.x * (uWas - liveU) + liveK.x * uWas, y: liveAt.y + liveS.y * (uWas - liveU) + liveK.y * uWas } : null;   // where they would be drawn now, had nothing been switched
+  liveCover = cover;
+  if (!on){
+    // the web view: the line is page text in the middle of the stage, and the stage itself glides
+    const s = $('stage').getBoundingClientRect(), here = { x: s.left + s.width / 2, y: s.top + s.height / 2 };
+    if (from){
+      // from where the lyrics are drawn now (the stage itself may still be gliding from the switch before)
+      const st = $('stage'), m = new DOMMatrix(getComputedStyle(st).transform), busy = st.getAnimations().length > 0 || Math.abs(uWas) > 0.001;
+      st.getAnimations().forEach(a => a.cancel());
+      st.animate([{ transform: `translate(${from.x + m.m41 - here.x}px,${from.y + m.m42 - here.y}px)` }, { transform: 'none' }],
+        { delay: busy ? 0 : COVER_GLIDE.wait * 1000, duration: 6500 / COVER_GLIDE.w, easing: 'cubic-bezier(.36,0,.14,1)', fill: 'backwards' });
+    }
+    liveAt = here; liveK = { x: 0, y: 0 }; liveS = { x: 0, y: 0 }; liveU = cg.u;
+    return;
+  }
   if (liveBloom === undefined){
     try { liveBloom = late.makeBloomGL($('glView')); } catch(e){ liveBloom = null; }
     if (!liveBloom){ $('status').textContent = '这台电脑的浏览器不支持 WebGL，已经用回网页渲染' + (late.useScroll() || late.useWordMode() ? '，滚动 / 逐词布局也用不了' : ''); fx.render = 'dom'; fx.layout = 'single'; fx.cover = false; late.saveFx(); late.applyFx(); return; }
@@ -469,14 +499,22 @@ function drawLiveGL(){
     liveGLKey = key; liveGLLast = '';
   }
   const X = liveGLx, t = lt(now());
+  const an = late.lyricAnchor(W, H, X.M), here = { x: r.left + an.x / dpr, y: r.top + an.y / dpr };
+  // switched: drawn where they were (from) = their new place + liveK * u, which gives liveK. Switched straight back
+  // before anything moved, u is 0 again and they are simply in their place
+  if (turned) liveK = from && Math.abs(cg.u) > 0.001 ? { x: (from.x - here.x) / cg.u, y: (from.y - here.y) / cg.u } : { x: 0, y: 0 };
+  if (turned || !liveAt || !cg.moving) liveS = { x: 0, y: 0 };
+  else if (Math.abs(cg.u - liveU) > 1e-5) liveS = { x: (here.x - liveAt.x) / (cg.u - liveU), y: (here.y - liveAt.y) / (cg.u - liveU) };
+  liveAt = here; liveU = cg.u;
+  const gx = liveK.x * cg.u, gy = liveK.y * cg.u;         // how far from their place the lyrics are drawn (window px)
   const probe = { fillRect(){}, clearRect(){}, beginPath(){}, rect(){}, clip(){}, save(){}, restore(){}, translate(){}, scale(){}, drawImage(){}, setTransform(){}, getTransform(){ return new DOMMatrix(); }, set globalAlpha(v){}, set globalCompositeOperation(v){}, set fillStyle(v){}, set filter(v){} };
   const st = late.drawFrame(probe, W, H, X.probeM, X.segs, t, true, true, true);
-  const sig = st ? st + '|' + key : null;
+  const sig = st && !cg.moving ? st + '|' + key : null;
   if (sig && sig === liveGLLast) return;                   // nothing moves: keep the last picture
   liveGLLast = sig || '';
   const c = X.ctx;
   c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, CW, CH);
-  c.setTransform(1, 0, 0, 1, Math.round(r.left * dpr), Math.round(r.top * dpr));
+  c.setTransform(1, 0, 0, 1, Math.round((r.left + gx) * dpr), Math.round((r.top + gy) * dpr));
   late.drawFrame(c, W, H, X.M, X.segs, t, true, true, true);
   const o = late.bloomOpts(X.M);
   if (!fx.glow.on || !late.useWebGL()) o.k = 0;       // canvas view without WebGL glow: plain text (glow comes from the sprites)

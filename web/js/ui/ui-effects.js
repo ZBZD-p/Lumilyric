@@ -1,6 +1,6 @@
 import { late } from '../core/late.js';
 import { $, lrcName, lrcSong, setCur, song } from '../core/lyrics.js';
-import { ANIMS, FX_DEFAULT, assignFx, exitSpec, findIdx, fx, glowCss, glowGain, lt, lyricDelay, now, seek, setPlaying } from '../core/settings.js';
+import { ANIMS, FX_DEFAULT, assignFx, exitSpec, findIdx, fx, glowCss, glowGain, lt, lyricDelay, now, scrollAlignKey, seek, setPlaying } from '../core/settings.js';
 import { render, segCache, segmentsFor } from '../render/view-dom.js';
 import { cubicBezier } from '../render/text-canvas.js';
 import { GRAIN, bassBusy, bassEnv, coverBmp, coverLabel, coverURL, curPalette, followBassOn, liveGLVer, setBgDirty, setLiveGLLast, setLiveGLVer } from '../background/background.js';
@@ -18,6 +18,7 @@ export {
   fxSlide,
   saveFx,
   setCoverAskPick,
+  showCoverAsk,
   setFps,
 };
 
@@ -37,7 +38,7 @@ function applyFx(){
   $('fxLayoutNote').textContent = fx.layout === 'word' ? '逐词：一次只显示一个词，英文按单词，中文用浏览器自带的分词拆成词语（标点跟着前一个词）。有逐字时间就按演唱时间切换，没有就按句子时长平均分配；双语模式下翻译整句显示在下方。'
     : '滚动歌词有自己的滚动动画；当前句会按逐字时间点亮（没有逐字时间就整句点亮）。';
   $('fxDragRow').hidden = $('fxBlurRow').hidden = $('fxAlignRow').hidden = fx.layout !== 'scroll';
-  document.querySelectorAll('#fxAlign button').forEach(b => b.setAttribute('aria-pressed', b.dataset.al === (fx.scrollAlign || 'left')));
+  document.querySelectorAll('#fxAlign button').forEach(b => b.setAttribute('aria-pressed', b.dataset.al === fx[scrollAlignKey()]));
   $('fxWordAnimRow').hidden = fx.layout !== 'word';
   $('fxAnimRow').hidden = $('fxExitRow').hidden = $('fxExitDurRow').hidden = fx.layout !== 'single';      // entry / exit: one line at a time only
   document.querySelectorAll('#fxWordAnim button').forEach(b => b.setAttribute('aria-pressed', b.dataset.wa === (fx.wordAnim || 'pop')));
@@ -115,7 +116,7 @@ document.querySelectorAll('#fxPerfPos button').forEach(b => b.onclick = () => { 
 $('fxPerfSize').oninput = e => { fx.perfSize = e.target.value / 100; saveFx(); applyFx(); };
 $('fxWordAnim').append(...Object.entries(WORD_ANIMS).map(([k, A]) => { const b = document.createElement('button'); b.dataset.wa = k; b.textContent = A.name; b.onclick = () => { fx.wordAnim = k; saveFx(); applyFx(); }; return b; }));
 $('fxDrag').oninput = e => { fx.scrollDrag = e.target.value / 100; saveFx(); applyFx(); };
-document.querySelectorAll('#fxAlign button').forEach(b => b.onclick = () => { fx.scrollAlign = b.dataset.al; saveFx(); applyFx(); setCur(null); render(true); });
+document.querySelectorAll('#fxAlign button').forEach(b => b.onclick = () => { fx[scrollAlignKey()] = b.dataset.al; saveFx(); applyFx(); setCur(null); render(true); });
 $('fxBlur').oninput = e => { fx.scrollBlur = e.target.value / 100; saveFx(); applyFx(); };
 $('fxLangShow').onchange = e => { fx.langSwitch = e.target.checked; saveFx(); applyFx(); };
 $('fxCover').onchange = e => { fx.cover = e.target.checked; saveFx(); applyFx(); setCur(null); render(true); };
@@ -183,13 +184,23 @@ async function autoCoverAsk(){
   $('coverQ').value = q;
   const items = await coverSearch();
   if (my !== coverAskSeq || !items || !$('coverModal').hidden || !$('exportModal').hidden) return;
+  showCoverAsk(items[0].thumb, `按「${q}」搜到 ${items.length} 个封面，要加载封面吗？`);
+}
+/* the question itself. It must not sit over the lyrics for a whole song when nobody is at the computer: the seconds
+   left count down on "不用了", and at zero that is the answer. */
+const COVER_ASK_SECS = 10;
+let coverAskT = 0;
+function showCoverAsk(thumb, msg){
   const im = $('coverAskImg'); im.style.visibility = ''; im.onerror = () => { im.style.visibility = 'hidden'; };
-  im.src = coverImgURL(items[0].thumb);
-  $('coverAskMsg').textContent = `按「${q}」搜到 ${items.length} 个封面，要加载封面吗？`;
+  im.src = coverImgURL(thumb);
+  $('coverAskMsg').textContent = msg;
   $('coverAsk').hidden = false;
   $('coverAskYes').focus();
+  let left = COVER_ASK_SECS;
+  const tick = () => { if (left <= 0) return closeCoverAsk(); $('coverAskSecs').textContent = left--; };
+  clearInterval(coverAskT); tick(); coverAskT = setInterval(tick, 1000);
 }
-const closeCoverAsk = () => { $('coverAsk').hidden = true; coverAskPick = null; };
+const closeCoverAsk = () => { clearInterval(coverAskT); $('coverAsk').hidden = true; coverAskPick = null; };
 $('coverAskNo').onclick = closeCoverAsk;
 $('coverAskYes').onclick = () => { const it = coverAskPick; coverAskPick = null; closeCoverAsk(); if (it) coverPick(it, true); else openCoverSearch(); };
 $('coverAsk').addEventListener('click', e => { if (e.target === $('coverAsk')) closeCoverAsk(); });

@@ -7,7 +7,7 @@ import { coverSide, imageSide, setCover } from '../background/cover-extract.js';
 import { createSongFlow } from '../render/song-transition.js';
 import { songStage, useScroll } from '../render/layout-scroll.js';
 import { exporting, setDelay } from '../export/export.js';
-import { applyFx, coverImgURL, setCoverAskPick } from '../ui/ui-effects.js';
+import { applyFx, coverImgURL, setCoverAskPick, showCoverAsk } from '../ui/ui-effects.js';
 import { api, helper } from './helper.js';
 
 export {
@@ -284,12 +284,8 @@ async function followCoverSuggest(s, my, hadCover){
   if (!$('coverModal').hidden || !$('exportModal').hidden || !$('coverAsk').hidden) return;
   best._tid = s.trackId;                                  // so an accepted cover is kept for this very song
   setCoverAskPick(best);
-  const im = $('coverAskImg'); im.style.visibility = ''; im.onerror = () => { im.style.visibility = 'hidden'; };
-  im.src = coverImgURL(best.thumb);
-  $('coverAskMsg').textContent = `${hadCover ? '播放器给的封面太小' : '播放器没有给封面'}，找到一个很像的：${best.title || '（无标题）'}` +
-    `${best.artist ? ' · ' + best.artist : ''}（${best.source}${side ? '，' + side + ' 像素' : ''}），匹配度 ${bestSc}%。要换成它吗？`;
-  $('coverAsk').hidden = false;
-  $('coverAskYes').focus();
+  showCoverAsk(best.thumb, `${hadCover ? '播放器给的封面太小' : '播放器没有给封面'}，找到一个很像的：${best.title || '（无标题）'}` +
+    `${best.artist ? ' · ' + best.artist : ''}（${best.source}${side ? '，' + side + ' 像素' : ''}），匹配度 ${bestSc}%。要换成它吗？`);
 }
 async function followCover(s, my){
   try {

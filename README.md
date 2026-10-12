@@ -72,7 +72,7 @@ lumilyric/
 │  ├─ build_single.py    生成单文件版页面 dist/lumilyric.html
 │  ├─ build_desktop.bat  生成桌面版 dist\Lumilyric（见「桌面版」）
 │  └─ tidy_old_files.bat 旧版文件夹整理（只需运行一次）
-├─ tests/                测试：python tests/test_track_state.py、tests/test_lyrics_match.py、tests/test_disk_cache.py、tests/test_qt_stub.py、tests/test_audio_level.py；node tests/test_transition.js、tests/test_look_melt.js、tests/test_seg_thumb.js、tests/test_smooth_scroll.js
+├─ tests/                测试：python tests/test_track_state.py、tests/test_lyrics_match.py、tests/test_disk_cache.py、tests/test_qt_stub.py、tests/test_audio_level.py；node tests/test_transition.js、tests/test_look_melt.js、tests/test_seg_thumb.js、tests/test_smooth_scroll.js、tests/test_tooltip.js、tests/test_letter_lift.js、tests/test_glide.js
 ├─ models/               Whisper 模型（ggml-*.bin），不进仓库
 ├─ tools/                whisper.cpp、Python 环境、模型缓存、临时文件，不进仓库
 └─ examples/             示例歌词
@@ -108,7 +108,7 @@ lumilyric/
 | `export/export.js` | 导出 MP4 / MOV / PNG ZIP、音频、保存位置 |
 | `ui/ui-effects.js` | 效果设置面板、封面搜索 |
 | `ui/fonts.js` | 歌词字体设置：中文 / 英文字体、加粗、字号，歌词和译文各一组 |
-| `ui/dropdown.js`、`menu.js`、`desktop.js` | 下拉框、「更多」菜单、桌面版窗口按钮 |
+| `ui/dropdown.js`、`tooltip.js`、`menu.js`、`desktop.js` | 下拉框、悬停提示、「更多」菜单、桌面版窗口按钮 |
 | `player/library.js` | 歌词库：AMLL TTML DB、LDDC |
 | `player/follow.js` | 跟随播放器：轮询、时间平滑、切歌找歌词和封面 |
 | `player/helper.js` | 页面里的自动识别 / 对齐 |

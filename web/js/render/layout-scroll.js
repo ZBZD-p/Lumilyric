@@ -1,8 +1,9 @@
 import { late } from '../core/late.js';
 import { assignMode, lineTokenTimes, mode, song } from '../core/lyrics.js';
-import { fx, karaokeTimes } from '../core/settings.js';
+import { coverGlideNow, fx, karaokeTimes } from '../core/settings.js';
+import { glideAt, glideKick } from '../core/glide.js';
 import { greedy, joinU, lineTexts, tokens, units } from './view-dom.js';
-import { SWEEP, canvasMeasurer, clamp01, cubicBezier, drawOnColour, liftDur, liftE, rowOffs, setSpriteAlphaMul, spriteCache, sweepActive, sweepPos } from './text-canvas.js';
+import { HOLD, SWEEP, canvasMeasurer, clamp01, cubicBezier, drawOnColour, holdGlow, liftWord, rowOffs, setSpriteAlphaMul, spriteCache, sweepActive, sweepPos } from './text-canvas.js';
 import { createSongStage } from './song-transition.js';
 
 export {
@@ -11,6 +12,7 @@ export {
   drawScrollOne,
   modeChanged,
   scrollE,
+  scrollAnchor,
   setBloomTL,
   songStage,
   useScroll,
@@ -70,7 +72,7 @@ function scrollLayout(M2, W, H){
     colW = Math.max(colW, ...rows.map(r => r.width), ...subWs);
     const h = rows.length * lineH + (subRows.length ? sfs * 0.45 + subRows.length * subH : 0);
     const times = lineTokenTimes(L, pri);
-    const seg = { t: L.t, end: L.end, times: times && times.length === k ? times : null };
+    const seg = { t: L.t, end: L.end, times: times && times.length === k ? times : null, we: L.wt && L.wt.length === k ? L.wt[k - 1].e : undefined };
     // word-by-word light only with real word times; otherwise the whole line lights up at once, like Apple Music
     items.push({ i, y, h, rows, subRows, subWs, n: k, kar: k && seg.times ? karaokeTimes(seg, k) : null, t: L.t, end: L.end });
     y += h + gap;
@@ -108,6 +110,35 @@ function scrollM(M, W, H){
   if (!M2.sprites) M2.sprites = spriteCache(M2);
   return M2;
 }
+/* the point of the area the current line grows from: its left end (its middle when centred), at the focus height.
+   Where the lyrics "are" for something that has to follow them (the glide when the cover comes or goes, background.js) */
+function scrollAnchor(M, W, H){
+  const M2 = scrollM(M, W, H), S = scrollLayout(M2, W, H);
+  const x0 = M2._x0 != null ? W * M2._x0 : (W - S.colW) / 2;
+  return { x: x0 + (M2._x0 != null ? S.maxW : S.colW) * scrollAlignNow(), y: H * SCROLL.anchor };
+}
+/* 对齐: where the rows sit in the column: 0 = every row starts at its left edge, 0.5 = every row is centred on its
+   axis, 1 = every row ends at its right edge. There is one setting for the column on its own (centred unless chosen
+   otherwise) and one for the column beside the cover (left), see scrollAlignKey in settings.js.
+   On the live page the rows never jump (an export always has the setting itself):
+   - the cover comes or goes: the alignment is mixed from the two settings by how far that change is along
+     (coverGlideNow, settings.js), the very glide that moves the lyrics, so rows and column move as one;
+   - 对齐 itself is switched: the rows glide to the new place from where they are (core/glide.js), and carry on from
+     there when it is switched again before they have arrived. */
+const ALIGN = { left: 0, center: 0.5, right: 1 }, ALIGN_W = 8;       // ALIGN_W: stiffness of the glide when 对齐 itself is switched (there in about 0.8 s)
+let alignSeen = null, alignTr = null, alignMoving = false;           // the two settings last seen [alone, beside the cover]; the glide after 对齐 was switched; is anything of it under way
+function scrollAlignNow(){
+  const aNo = ALIGN[fx.scrollAlign] ?? ALIGN.center, aCov = ALIGN[fx.scrollAlignCover] ?? ALIGN.left;
+  if (late.exporting) return fx.cover ? aCov : aNo;
+  const ms = performance.now(), cg = coverGlideNow(ms), c = cg.to + cg.u;       // c: 0 = no cover ... 1 = cover
+  if (alignSeen && (alignSeen[0] !== aNo || alignSeen[1] !== aCov))
+    alignTr = glideKick(alignTr, (alignSeen[0] - aNo) * (1 - c) + (alignSeen[1] - aCov) * c, ms, 0, ALIGN_W, 0.001);
+  alignSeen = [aNo, aCov];
+  const g = glideAt(alignTr, ms);
+  if (!g) alignTr = null;
+  alignMoving = !!g || cg.moving;
+  return aNo + (aCov - aNo) * c + (g ? g.x : 0);
+}
 /* shiftFn(j, firstVisible) -> extra vertical offset of line j in px (song changes); omitted = 0.
    fade (a language change, see drawScroll): { dy(j) extra offset, alpha for the text, same(j) + priSame: lines whose
    main text is the same in both languages get priSame as its opacity instead } */
@@ -116,14 +147,15 @@ function drawScrollOne(ctx, W, H, M, t, shiftFn, fade){
   const SP = M._probe ? M.sprites : M2.sprites, S = scrollLayout(M2, W, H), items = S.items;
   if (!items.length) return 'empty';
   const fs = M2.fs, sfs = M2.sfs, bs = fs / 72, anchor = H * SCROLL.anchor;
-  // beside the cover the column starts at the area's left margin; on its own it is centred in the frame (by its widest row)
-  const centre = fx.scrollAlign === 'center', x0 = M2._x0 != null ? W * M2._x0 : (W - S.colW) / 2;
-  const axis = M2._x0 != null ? x0 + S.maxW / 2 : W / 2, px = centre ? axis : x0;     // px: the point a line grows from
-  const rowX = w => centre ? axis - w / 2 : x0;
+  // beside the cover the column starts at the area's left margin and is as wide as a row may be; on its own it is
+  // centred in the frame and as wide as its widest row. al: where the rows sit in it (对齐, scrollAlignNow)
+  const al = scrollAlignNow(), x0 = M2._x0 != null ? W * M2._x0 : (W - S.colW) / 2, span = M2._x0 != null ? S.maxW : S.colW;
+  const px = x0 + span * al;                               // px: the point a line grows from
+  const rowX = w => x0 + (span - w) * al;
   // which line is current; the column starts moving a moment before the next line begins, so the line arrives as it is sung
   const L = SCROLL.lead, { cur, curL } = scrollCur(items, t);
   const offFor = j => scrollOff(items, j, t, anchor, curL);
-  let moving = false, lit = 0;
+  let moving = alignMoving, lit = 0;
   ctx.save();
   ctx.beginPath(); ctx.rect(0, 0, W, H); ctx.clip();       // the column ends at the edge of its area (under the cover, above the controls)
   ctx.globalCompositeOperation = drawOnColour ? 'source-over' : 'lighter';
@@ -173,11 +205,14 @@ function drawScrollOne(ctx, W, H, M, t, shiftFn, fade){
           if (q > 0 && q < 1) moving = true;
           const ex = swc - SWo.offs[tk.k];
           if (ex - SE / 2 >= tk.w) lit++;
-          const lp = (t - it.kar.st[tk.k]) / liftDur(it.kar.du[tk.k]);
-          if (lp > 0 && lp < 1) moving = true;
-          const yy = ry - 0.05 * fs * liftE(lp) * act;
-          SP.drawLit(ctx, tk.s, false, x, yy, SCROLL.dim, Infinity, 0, false, undefined, blur);
-          if (ex + SE / 2 > 0) SP.drawLit(ctx, tk.s, false, x, yy, act * (drawOnColour ? 1 : 1 - SCROLL.dim), ex - SE / 2 >= tk.w + 1 ? Infinity : ex, SE, true, SCROLL.dim + (1 - SCROLL.dim) * act, blur);
+          const hg = holdGlow(it.kar, tk.k, t) * act;
+          if (hg > 0) moving = true;
+          if (liftWord(tk, M2, it.kar, t, SE, (l, s, dx, w) => {
+            const yy = ry - 0.05 * fs * l * act, xs = x + dx, e = ex - dx;       // e: the sweep edge, relative to this piece
+            if (hg > 0) SP.draw(ctx, s, false, xs, yy, hg, HOLD.blur * bs + blur);      // a long last word: a little more light around it
+            SP.drawLit(ctx, s, false, xs, yy, SCROLL.dim, Infinity, 0, false, undefined, blur);
+            if (e + SE / 2 > 0) SP.drawLit(ctx, s, false, xs, yy, act * (drawOnColour ? 1 : 1 - SCROLL.dim), e - SE / 2 >= w + 1 ? Infinity : e, SE, true, SCROLL.dim + (1 - SCROLL.dim) * act, blur);
+          }, blur > 0.3)) moving = true;      // still blurred as the line comes in: in one piece
         } else {
           SP.draw(ctx, tk.s, false, x, ry, it.kar ? SCROLL.dim : base, blur);
         }

@@ -1,8 +1,11 @@
 import { late } from './late.js';
+import { glideAt, glideKick } from './glide.js';
 import { $, assignPlaying, audio, base, playing, setBase, setStartPerf, song, startPerf } from './lyrics.js';
 
 export {
   ANIMS,
+  COVER_GLIDE,
+  coverGlideNow,
   FX_DEFAULT,
   assignFx,
   exitSpec,
@@ -17,6 +20,7 @@ export {
   FONT_STACK_ZH,
   fontName,
   lyricFont,
+  scrollAlignKey,
   karaokeTimes,
   lt,
   lyricDelay,
@@ -30,7 +34,8 @@ export {
 
 /* Effect settings (fx), exit presets, karaoke timing, glow */
 /* effect settings, shared by live playback and video export */
-const FX_DEFAULT = { langSwitch: true, ui: 'glass', render: 'webgl', layout: 'scroll', scrollDrag: 2, scrollBlur: 1, scrollAlign: 'left', wordAnim: 'pop', showFps: false, perfPos: 'tc', perfSize: 1, cover: true, anim: 'pop', exit: 'float', exitDur: 0.75, font: { main: { zh: '', en: '', bold: true, s: 1 }, sub: { zh: '', en: '', bold: false, s: 1 } }, bg: { mode: 'flow', speed: 1, dim: 0.3, sat: 1.5, colors: 5, grain: 0, style: 'cover', pulse: 0.5, pulseMode: 'breath' }, glow: { on: true, style: 'soft', strength: 0.2, radius: 0.3, color: '#ffffff', thresh: 0.5 } };
+const ALIGNS = /^(left|center|right)$/;
+const FX_DEFAULT = { langSwitch: true, ui: 'glass', render: 'webgl', layout: 'scroll', scrollDrag: 2, scrollBlur: 1, scrollAlign: 'center', scrollAlignCover: 'left', wordAnim: 'pop', showFps: false, perfPos: 'tc', perfSize: 1, cover: true, anim: 'pop', exit: 'float', exitDur: 0.75, font: { main: { zh: '', en: '', bold: true, s: 1 }, sub: { zh: '', en: '', bold: false, s: 1 } }, bg: { mode: 'flow', speed: 1, dim: 0.3, sat: 1.5, colors: 5, grain: 0, style: 'cover', pulse: 0.5, pulseMode: 'breath' }, glow: { on: true, style: 'soft', strength: 0.2, radius: 0.3, color: '#ffffff', thresh: 0.5 } };
 const ANIMS = ['pop', 'karaoke', 'fade', 'rise'];
 /* exit presets. line: the whole line leaves at once; otherwise the words leave one after another.
    dy in em (negative = up), sc = scale change, blur in px at 72 px type */
@@ -61,7 +66,29 @@ function lyricFont(isSub, zh){
     family: (pick ? fontName(pick) : '') + (isSub || zh ? FONT_STACK_ZH : FONT_STACK_EN),
   };
 }
-/* karaoke: when each word starts lighting up and how long the sweep takes (shared by page and export) */
+/* 对齐 of the scrolling column. Two settings, one for each state of 显示封面, because their natural places differ:
+   on its own the column is in the middle of the frame and its rows are centred (scrollAlign), beside the cover the
+   rows start at one left edge (scrollAlignCover). The 对齐 switch shows and sets the one in use. */
+const scrollAlignKey = () => fx.cover ? 'scrollAlignCover' : 'scrollAlign';
+/* 显示封面 switched: the lyrics wait a moment while the cover gets going (wait, s), then glide to their new place as if
+   it pulled them along (w: how stiff the glide is, see core/glide.js; there in about a second).
+   coverGlideNow: how far that change is along at ms (live page). to: 1 = cover, 0 = none; u: how much of the change
+   is still to come, from -1 (just switched on) or 1 (just switched off) to 0 (arrived). ONE glide for everything that
+   follows the cover (where the lyrics are, background.js; how their rows are aligned, layout-scroll.js): both are
+   worked out from u alone, so they cannot get out of step however quickly the switch is clicked. */
+const COVER_GLIDE = { wait: 0.2, w: 6.5 };
+let coverSeen = null, coverG = null;
+function coverGlideNow(ms){
+  const to = fx.cover ? 1 : 0;
+  if (coverSeen !== null && coverSeen !== to) coverG = glideKick(coverG, coverSeen - to, ms, COVER_GLIDE.wait, COVER_GLIDE.w, 0.0005);
+  coverSeen = to;
+  const g = glideAt(coverG, ms);
+  if (!g) coverG = null;
+  return { to, u: g ? g.x : 0, moving: !!g };
+}
+/* karaoke: when each word starts lighting up and how long the sweep takes (shared by page and export).
+   hold: how long the last word of the line is really sung (seg.we = where it ends, from the lyrics' own word times),
+   0 when that is not known; a long one gets a little more glow (holdGlow, text-canvas.js). */
 function karaokeTimes(seg, n){
   const st = [], du = [];
   if (seg.times && seg.times.length === n){
@@ -74,9 +101,9 @@ function karaokeTimes(seg, n){
     const dur = Math.max(0.3, seg.end - seg.t), d = dur * 0.85 / Math.max(1, n);
     for (let k = 0; k < n; k++){ st.push(seg.t + 0.1 + k * d); du.push(Math.max(0.15, Math.min(1.2, d))); }
   }
-  return { st, du };
+  return { st, du, hold: seg.we != null && seg.times && seg.times.length === n ? Math.max(0, seg.we - seg.times[n - 1]) : 0 };
 }
-try { const sv = JSON.parse(localStorage.getItem('lrc-fx') || 'null'); if (sv && sv.glow) fx.glow = { ...fx.glow, ...sv.glow }; if (sv && ANIMS.includes(sv.anim)) fx.anim = sv.anim; if (sv && EXITS[sv.exit]) fx.exit = sv.exit; if (sv && (sv.render === 'webgl' || sv.render === 'dom')) fx.render = sv.render; if (sv && typeof sv.showFps === 'boolean') fx.showFps = sv.showFps; if (sv && (sv.ui === 'glass' || sv.ui === 'flat')) fx.ui = sv.ui; if (sv && /^(tl|tc|tr|bl|bc|br)$/.test(sv.perfPos)) fx.perfPos = sv.perfPos; if (sv && isFinite(sv.perfSize)) fx.perfSize = Math.min(2, Math.max(0.7, +sv.perfSize)); if (sv && /^(scroll|single|word)$/.test(sv.layout)) fx.layout = sv.layout; if (sv && typeof sv.cover === 'boolean') fx.cover = sv.cover; if (sv && typeof sv.langSwitch === 'boolean') fx.langSwitch = sv.langSwitch; if (sv && /^(pop|punch|slide|rise|zoom|flip|type|fade)$/.test(sv.wordAnim)) fx.wordAnim = sv.wordAnim; if (sv && isFinite(sv.scrollDrag)) fx.scrollDrag = Math.min(3, Math.max(0, +sv.scrollDrag)); if (sv && /^(left|center)$/.test(sv.scrollAlign)) fx.scrollAlign = sv.scrollAlign; if (sv && isFinite(sv.scrollBlur)) fx.scrollBlur = Math.min(3, Math.max(0, +sv.scrollBlur)); if (sv && sv.bg) fx.bg = { ...fx.bg, ...sv.bg }; if (sv && isFinite(sv.exitDur)) fx.exitDur = Math.min(2, Math.max(0.2, +sv.exitDur));
+try { const sv = JSON.parse(localStorage.getItem('lrc-fx') || 'null'); if (sv && sv.glow) fx.glow = { ...fx.glow, ...sv.glow }; if (sv && ANIMS.includes(sv.anim)) fx.anim = sv.anim; if (sv && EXITS[sv.exit]) fx.exit = sv.exit; if (sv && (sv.render === 'webgl' || sv.render === 'dom')) fx.render = sv.render; if (sv && typeof sv.showFps === 'boolean') fx.showFps = sv.showFps; if (sv && (sv.ui === 'glass' || sv.ui === 'flat')) fx.ui = sv.ui; if (sv && /^(tl|tc|tr|bl|bc|br)$/.test(sv.perfPos)) fx.perfPos = sv.perfPos; if (sv && isFinite(sv.perfSize)) fx.perfSize = Math.min(2, Math.max(0.7, +sv.perfSize)); if (sv && /^(scroll|single|word)$/.test(sv.layout)) fx.layout = sv.layout; if (sv && typeof sv.cover === 'boolean') fx.cover = sv.cover; if (sv && typeof sv.langSwitch === 'boolean') fx.langSwitch = sv.langSwitch; if (sv && /^(pop|punch|slide|rise|zoom|flip|type|fade)$/.test(sv.wordAnim)) fx.wordAnim = sv.wordAnim; if (sv && isFinite(sv.scrollDrag)) fx.scrollDrag = Math.min(3, Math.max(0, +sv.scrollDrag)); if (sv && ALIGNS.test(sv.scrollAlignCover)){ fx.scrollAlignCover = sv.scrollAlignCover; if (ALIGNS.test(sv.scrollAlign)) fx.scrollAlign = sv.scrollAlign; } else if (sv && sv.scrollAlign === 'center') fx.scrollAlignCover = 'center';      /* saved when there was one 对齐 for both: 居中 was a choice and is kept for both; 靠左 was only the default, so the new defaults apply */ if (sv && isFinite(sv.scrollBlur)) fx.scrollBlur = Math.min(3, Math.max(0, +sv.scrollBlur)); if (sv && sv.bg) fx.bg = { ...fx.bg, ...sv.bg }; if (sv && isFinite(sv.exitDur)) fx.exitDur = Math.min(2, Math.max(0.2, +sv.exitDur));
   if (sv && sv.font) for (const g of ['main', 'sub']){
     const s = sv.font[g], d = fx.font[g];
     if (!s) continue;

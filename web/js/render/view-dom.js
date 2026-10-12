@@ -125,7 +125,9 @@ function segmentsFor(i, M = DOM_M, cache = segCache){
     cache.set(key, segs);
     return segs;
   };
-  if (!oneLine) return withTail([{ pri, sub, t: L.t, end: L.end, times }]);
+  // where the line's last word ends, when the times are the lyrics' own (one per word): karaokeTimes, hold
+  const we = L.wt && times && times.length === L.wt.length ? L.wt[L.wt.length - 1].e : undefined;
+  if (!oneLine) return withTail([{ pri, sub, t: L.t, end: L.end, times, we }]);
   let pp = chunkText(pri, false, 1, M), ss = chunkText(sub, true, 1, M);
   const k = Math.max(pp.length, ss.length);
   if (pp.length < k) pp = chunkText(pri, false, k, M);
@@ -136,6 +138,7 @@ function segmentsFor(i, M = DOM_M, cache = segCache){
     let o = 0;
     const segs = pp.map((p, j) => { const tt = times.slice(o, o + cnt[j]); o += cnt[j]; return { pri: p, sub: ss[j] || '', t: tt[0], times: tt }; });
     segs.forEach((g, j) => g.end = segs[j + 1] ? segs[j + 1].t : L.end);
+    segs[segs.length - 1].we = we;
     return withTail(segs);
   }
   const lens = pp.map(p => p.length), tot = lens.reduce((a, b) => a + b, 0) || 1;
@@ -196,11 +199,31 @@ function showSeg(seg, t){
     const s = document.createElement('span'); s.className = 'w'; s.textContent = x;
     if (fx.anim === 'karaoke'){
       s.textContent = '';
-      const kb = document.createElement('span'); kb.className = 'kb'; kb.textContent = x;
-      const kg = document.createElement('span'); kg.className = 'kg'; kg.textContent = x; kg.setAttribute('aria-hidden', 'true');
-      s.append(kg, kb);
+      const lit = (box, text) => {
+        const kb = document.createElement('span'); kb.className = 'kb'; kb.textContent = text;
+        const kg = document.createElement('span'); kg.className = 'kg'; kg.textContent = text; kg.setAttribute('aria-hidden', 'true');
+        box.append(kg, kb);
+      };
       const d = kar ? kar.st[k] - t : -9, du = kar ? kar.du[k] : 0.01; k++;   // the title card is shown fully lit
-      s.style.setProperty('--kdl', d.toFixed(3) + 's'); s.style.setProperty('--kd', du.toFixed(3) + 's'); s.style.setProperty('--kld', late.liftDur(du).toFixed(3) + 's');
+      if (kar && k === n && late.holdStrength(kar)){
+        // a long last word: a little more light around it while it is sung (holdGlow, text-canvas.js)
+        const kh = document.createElement('span'); kh.className = 'kh'; kh.textContent = x; kh.setAttribute('aria-hidden', 'true');
+        kh.style.setProperty('--hg', late.holdStrength(kar).toFixed(3)); kh.style.setProperty('--hd', kar.hold.toFixed(3) + 's'); kh.style.setProperty('--hdl', d.toFixed(3) + 's');
+        s.appendChild(kh);
+      }
+      if (kar && late.liftSplit(x, du)){
+        // the letters rise one by one (liftWord, text-canvas.js): each is a box of its own, timed in measureSweep
+        const cs = Array.from(x), km = kernMargins(cs);
+        cs.forEach((c, i) => {
+          const b = document.createElement('span'); b.className = 'c'; lit(b, c);
+          if (Math.abs(km[i]) > 0.01) b.style.marginLeft = km[i].toFixed(2) + 'px';
+          s.appendChild(b);
+        });
+        s.classList.add('ws'); s._kt = [d, du];
+      } else {
+        lit(s, x);
+        s.style.setProperty('--kdl', d.toFixed(3) + 's'); s.style.setProperty('--kd', du.toFixed(3) + 's'); s.style.setProperty('--kld', late.liftDur(du).toFixed(3) + 's');
+      }
       p.appendChild(s); continue;
     }
     const d = seg && seg.times ? seg.times[k] - t : k * step - elapsed; k++;
@@ -216,9 +239,16 @@ function showSeg(seg, t){
   stage.appendChild(el);
   if (kar){ p._kar = kar; measureSweep(p); }
 }
-/* DOM karaoke: measure where each word sits along the line (rows joined end to end), once per layout */
+/* letters that are boxes of their own lose the kerning between them: it is put back as a margin before each letter */
+function kernMargins(cs){
+  let pre = '', end = 0;
+  return cs.map(c => { pre += c; const wc = textWidth(c, false), x = textWidth(pre, false) - wc, m = x - end; end = x + wc; return m; });
+}
+/* DOM karaoke: measure where each word sits along the line (rows joined end to end), once per layout; a word whose
+   letters rise one by one gives each letter its place in the sweep and its own times */
 function measureSweep(p){
   const ws = [...p.querySelectorAll('.w')];
+  const E = late.SWEEP.edge * parseFloat(getComputedStyle(p).fontSize);
   const offs = [], wd = []; let base = 0, rowTop = null, rowRight = 0;
   for (const w of ws){
     if (rowTop !== null && Math.abs(w.offsetTop - rowTop) > 2){ base += rowRight; rowRight = 0; }
@@ -226,8 +256,15 @@ function measureSweep(p){
     const o = base + w.offsetLeft - p._rowL;
     offs.push(o); wd.push(w.offsetWidth); rowRight = w.offsetLeft - p._rowL + w.offsetWidth;
     w.style.setProperty('--o', o.toFixed(1) + 'px');
+    if (!w._kt) continue;
+    const [d, du] = w._kt, span = w.offsetWidth + E / 2;
+    for (const c of w.querySelectorAll('.c')){
+      const x0 = c.offsetLeft, x1 = x0 + c.offsetWidth, [t0, ld] = late.letterLift(d, du, x0, x1, span);
+      c.style.setProperty('--o', (o + x0).toFixed(1) + 'px');
+      c.style.setProperty('--kdl', t0.toFixed(3) + 's'); c.style.setProperty('--kd', Math.max(0.01, du * (x1 - x0) / span).toFixed(3) + 's'); c.style.setProperty('--kld', ld.toFixed(3) + 's');
+    }
   }
-  p._sw = { offs, ws: wd, E: late.SWEEP.edge * parseFloat(getComputedStyle(p).fontSize) };
+  p._sw = { offs, ws: wd, E };
 }
 function updateSweepDOM(){
   if (fx.anim !== 'karaoke') return;

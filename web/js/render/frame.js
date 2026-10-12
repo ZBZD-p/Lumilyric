@@ -5,7 +5,7 @@ import { oneLine } from './view-dom.js';
 import { buildTimeline, canvasMeasurer, clamp01, drawSeg, easeOut, setDrawOnColour, setSpriteAlphaMul } from './text-canvas.js';
 import { coverHi, coverURL, drawFlowBg, exportDith, exportProf, flowPalette } from '../background/background.js';
 import { bloomOpts, exportBloomGL, useWebGL } from './bloom.js';
-import { bloomTL, drawScroll, drawScrollOne, scrollE, setBloomTL, songStage, useScroll } from './layout-scroll.js';
+import { bloomTL, drawScroll, drawScrollOne, scrollAnchor, scrollE, setBloomTL, songStage, useScroll } from './layout-scroll.js';
 import { drawWords, useWordMode } from './layout-words.js';
 
 export {
@@ -99,17 +99,37 @@ function coverBlend(art, bg){
   art.style.backgroundImage = bg;
   coverShownBg = bg;
 }
+/* switching the panel on or off (显示封面): it slides in from outside the left edge and back out to it (.covpanel /
+   .covpanel.away in style.css: how long and how eased), and the lyrics glide to their new place meanwhile (drawLiveGL,
+   background.js). Nothing fades. When the page opens it is simply there or not. */
+const COVER_AWAY = 0.75;                                // seconds until it is gone (a little more than the CSS takes to slide it out)
+let coverIn = null, coverAwayT = 0;                      // is the panel in; null before the first frame
+function coverSlide(el, on){
+  if (on === coverIn) return;
+  const first = coverIn === null;
+  coverIn = on;
+  clearTimeout(coverAwayT);
+  if (first){ el.hidden = !on; el.classList.remove('away'); return; }
+  if (on){
+    if (el.hidden){ el.hidden = false; el.classList.add('away'); void el.offsetWidth; }   // starts from outside; when it was still on its way out, from where it is
+    el.classList.remove('away');
+  } else {
+    el.classList.add('away');
+    coverAwayT = setTimeout(() => { el.hidden = true; }, COVER_AWAY * 1000);
+  }
+}
 function updateCoverPanel(){
   const el = $('coverPanel');
   document.body.classList.toggle('cover-on', useCoverPanel());      // style.css: the header's own title steps aside in portrait
-  if (!useCoverPanel()){ if (!el.hidden) el.hidden = true; coverPanelKey = ''; return; }
+  if (!useCoverPanel()){ coverSlide(el, false); coverPanelKey = ''; return; }
   const r = liveRect();
   const key = [r.left, r.top, r.width, r.height, coverTitle(), coverArtist(), coverURL].join('|');
   if (!coverPanelDirty && key === coverPanelKey) return;
   coverPanelDirty = false; coverPanelKey = key;
   const L = coverLayout(r.width, r.height);
-  el.hidden = false;
   Object.assign(el.style, { left: r.left + L.x + 'px', top: r.top + L.y + 'px' });
+  el.style.setProperty('--away', -(r.left + Math.max(L.x + L.s * 1.2, L.tx + L.tw + 8)) + 'px');      // how far left is outside the window: shadow, title and all
+  coverSlide(el, true);
   const art = $('covArt');
   Object.assign(art.style, { width: L.s + 'px', height: L.s + 'px' });
   art.style.setProperty('--cr', L.r + 'px'); art.style.setProperty('--cs', L.s + 'px');
@@ -146,6 +166,19 @@ function regionM(M, rw, rh, portrait){
   const Mr = M._reg.Mr, tkey = [song.lines.length, mode, oneLine].join('|');
   if (Mr._segSong !== song || Mr._segKey !== tkey){ Mr._segs = buildTimeline(Mr); Mr._segSong = song; Mr._segKey = tkey; }
   return Mr;
+}
+/* where the lyrics are in a frame of W x H drawn with M: the point the line being sung is set out from (the middle of
+   the area for one line or one word, the start of the current row for the scrolling column), in the frame's own px.
+   The cover panel moves it: the glide between the two places is in drawLiveGL (background.js). */
+function lyricAnchor(W, H, M){
+  let ox = 0, oy = 0;
+  if (useCoverPanel()){
+    const R = coverLayout(W, H).region;
+    ox = Math.round(R.x); oy = Math.round(R.y); W = Math.round(R.w); H = Math.round(R.h);
+    M = regionM(M, W, H, R.portrait);
+  }
+  const a = useScroll() ? scrollAnchor(M, W, H) : { x: W / 2, y: H * (useWordMode() ? 0.47 : 0.5) };
+  return { x: ox + a.x, y: oy + a.y };
 }
 /* ================= changing the layout (单句 / 滚动歌词 / 逐词), live only =================
    A strict sequence, like a song change: the layout being left goes out in its own way, then the new one comes in
@@ -288,4 +321,4 @@ function drawFrameIn(ctx, W, H, M0, M, segs, t, transparent, noBloom, coverR, R,
 function setCoverPanelDirty(v){ return coverPanelDirty = v; }   // other modules cannot assign to an imported binding
 
 /* names that modules loaded before this one call or read (core/late.js) */
-Object.assign(late, { updateCoverPanel, useCoverPanel, layoutTrStep, liveRect, drawFrame, setCoverPanelDirty });
+Object.assign(late, { updateCoverPanel, useCoverPanel, layoutTrStep, liveRect, lyricAnchor, drawFrame, setCoverPanelDirty });

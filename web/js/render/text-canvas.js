@@ -14,9 +14,12 @@ export {
   drawOnColour,
   drawSeg,
   easeOut,
+  HOLD,
+  holdGlow,
   layoutSeg,
-  liftDur,
-  liftE,
+  letterLift,
+  liftSplit,
+  liftWord,
   rowOffs,
   setDrawOnColour,
   setSpriteAlphaMul,
@@ -49,6 +52,57 @@ function cubicBezier(x1, y1, x2, y2){
    so quick runs of words rise as one smooth wave instead of jumping one by one */
 const liftE = cubicBezier(0.35, 0, 0.25, 1);
 const liftDur = du => Math.max(0.7, du + 0.3);
+/* A word sung slowly lifts letter by letter: when it is written with separate letters (English, numbers ...) each
+   letter starts to rise when the sweep reaches it, so the word rises like a wave along with the light instead of all
+   at once when its first letter is sung. A word that is over quickly rises whole, as do scripts whose letters join or
+   stack (Arabic, Indic, combining marks); Chinese and Japanese are a token per character already. */
+const LIFT_SPLIT = /^[\p{Script=Latin}\p{Script=Cyrillic}\p{Script=Greek}\p{N}\p{P}\p{S}]{2,}$/u;
+const LIFT_SLOW = 0.5;                        // s: the sweep takes at least this long to cross the word
+const liftSplit = (s, du) => du >= LIFT_SLOW && LIFT_SPLIT.test(s);
+/* The last word of a line, held long: its glow swells a little while it is sung and settles again afterwards. Only
+   with the lyrics' own word times (kar.hold, karaokeTimes), and only when 辉光 is on. from..full: how long the word
+   must last for none .. all of it (s); gain: the most light added (not much: the word is white already); blur: how
+   wide the extra light is (px at 72 px type); fade: how long it takes to settle (s). */
+const HOLD = { from: 0.8, full: 1.8, gain: 0.3, blur: 10, fade: 0.8 };
+const smooth01 = x => x <= 0 ? 0 : x >= 1 ? 1 : x * x * (3 - 2 * x);
+const holdStrength = kar => kar && kar.hold && fx.glow.on ? HOLD.gain * clamp01((kar.hold - HOLD.from) / (HOLD.full - HOLD.from)) : 0;
+function holdGlow(kar, k, t){                 // the extra light on word k at t: 0 .. HOLD.gain
+  if (k !== kar.st.length - 1) return 0;
+  const s = holdStrength(kar), el = t - kar.st[k];
+  return s && el > 0 ? s * smooth01(el / kar.hold) * (1 - smooth01((el - kar.hold) / HOLD.fade)) : 0;
+}
+/* when a letter starts to rise and for how long: it lies from x0 to x1 in its word; the sweep crosses span (the word
+   and half the soft edge, see sweepRaw) in the word's time. The first letter starts with the word, as before. */
+const letterLift = (st, du, x0, x1, span) => [st + du * x0 / span, liftDur(du * (x1 - x0) / span)];
+function letterEdges(tk, M){                 // where each letter of the word starts (px from the word's start); the last entry is its end
+  if (tk.lx !== undefined) return tk.lx;
+  if (!LIFT_SPLIT.test(tk.s)) return tk.lx = null;
+  const lx = []; let pre = '';
+  tk.cs = Array.from(tk.s);
+  // the width up to and with the letter, less the letter alone: the kerning with the letter before stays in
+  for (const c of tk.cs){ pre += c; lx.push(Math.min(tk.w, Math.max(lx.length ? lx[lx.length - 1] : 0, M.w(pre, false) - M.w(c, false)))); }
+  lx[0] = 0; lx.push(tk.w);
+  return tk.lx = lx;
+}
+/* draws one karaoke word, lifted. paint(l, s, dx, w) draws the text s, w wide, dx to the right of the word's start,
+   raised by l (0 = on the line ... 1 = fully up): the whole word, or, for a word that lifts letter by letter, each of
+   its letters in turn. A letter is a picture of its own (its own sprite, with its own blur and glow) put where it
+   stands in the word, so nothing is ever cut; such a word is drawn that way the whole time, not only while it rises,
+   so that it does not change in the least when the lift begins or ends. whole: keep the word in one piece this time
+   (while it is blurred: the blurs of letters lying over each other do not add up to the blur of the word).
+   Returns true while anything is still rising. */
+function liftWord(tk, M, kar, t, SE, paint, whole){
+  const st = kar.st[tk.k], du = kar.du[tk.k], lx = !whole && du >= LIFT_SLOW ? letterEdges(tk, M) : null;
+  if (!lx){ const p = (t - st) / liftDur(du); paint(liftE(p), tk.s, 0, tk.w); return p > 0 && p < 1; }
+  const cs = tk.cs, span = tk.w + SE / 2;
+  let moving = false;
+  for (let i = 0; i < cs.length; i++){
+    const [t0, d] = letterLift(st, du, lx[i], lx[i + 1], span), p = (t - t0) / d;
+    if (p > 0 && p < 1) moving = true;
+    paint(liftE(p), cs[i], lx[i], M.w(cs[i], false));
+  }
+  return moving;
+}
 /* karaoke sweep: ONE soft bright edge that travels along the whole line (across word boundaries and wrapped
    rows), instead of a separate wipe restarting in every word. Inside word k the edge moves from the word's
    start to just past its end; between words it waits; the path is then smoothed over a short time window so
@@ -317,16 +371,20 @@ function drawSeg(ctx, W, H, M, seg, t, exitT){
         if (a <= 0.003) continue;
         const q = clamp01((t - kar.st[tk.k]) / kar.du[tk.k]);
         if (q > 0 && q < 1) moving = true;
-        if (t > kar.st[tk.k] && t < kar.st[tk.k] + liftDur(kar.du[tk.k])) moving = true;
         const ex = swc - SWo.offs[tk.k];             // sweep edge, relative to this word
         if (ex - SE / 2 >= tk.w) lit++;
-        const yy = cy + 0.2 * fs * (1 - lineE) - 0.05 * fs * liftE((t - kar.st[tk.k]) / liftDur(kar.du[tk.k])) + wDy;
         shown++;
-        if (xing && ex - SE / 2 >= tk.w && (exBlur + wBlur > 0.3 || wSc !== 1)){ put(tk.s, cx, yy, wSc, a, exBlur + wBlur, tk.w); continue; }
-        const x = x0 + tk.x;
-        // dim base (no glow) + bright part swept in from the left (same edge as the CSS gradient)
-        SP.drawLit(ctx, tk.s, false, x, yy, a * 0.3, Infinity, 0, false);
-        if (ex + SE / 2 > 0) SP.drawLit(ctx, tk.s, false, x, yy, a * (drawOnColour ? 1 : 0.7), ex - SE / 2 >= tk.w + 1 ? Infinity : ex, SE, true, a);
+        const x = x0 + tk.x, y0 = cy + 0.2 * fs * (1 - lineE) + wDy, hg = holdGlow(kar, tk.k, t);
+        if (hg > 0) moving = true;
+        const leaving = xing && (exBlur + wBlur > 0.3 || wSc !== 1);      // blurred or scaled on its way out: in one piece
+        if (liftWord(tk, M, kar, t, SE, (l, s, dx, w) => {
+          const yy = y0 - 0.05 * fs * l, xs = x + dx, e = ex - dx;       // e: the sweep edge, relative to this piece
+          if (hg > 0) SP.draw(ctx, s, false, xs, yy, a * hg, HOLD.blur * bs + exBlur + wBlur);      // a long last word: a little more light around it
+          if (leaving && ex - SE / 2 >= tk.w) return put(s, cx, yy, wSc, a, exBlur + wBlur, w);
+          // dim base (no glow) + bright part swept in from the left (same edge as the CSS gradient)
+          SP.drawLit(ctx, s, false, xs, yy, a * 0.3, Infinity, 0, false);
+          if (e + SE / 2 > 0) SP.drawLit(ctx, s, false, xs, yy, a * (drawOnColour ? 1 : 0.7), e - SE / 2 >= w + 1 ? Infinity : e, SE, true, a);
+        }, leaving)) moving = true;
         continue;
       }
       const p = clamp01((seg.times ? t - seg.times[tk.k] : el - tk.k * step) / 0.9);
@@ -370,4 +428,4 @@ function setSpriteAlphaMul(v){ return spriteAlphaMul = v; }   // other modules c
 function setDrawOnColour(v){ return drawOnColour = v; }   // other modules cannot assign to an imported binding
 
 /* names that modules loaded before this one call or read (core/late.js) */
-Object.assign(late, { liftDur, SWEEP, sweepPos });
+Object.assign(late, { liftDur, liftSplit, letterLift, HOLD, holdStrength, SWEEP, sweepPos });

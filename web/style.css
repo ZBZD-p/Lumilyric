@@ -10,7 +10,7 @@
   --zh:"Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
   --mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
   --ease:cubic-bezier(.16,1,.3,1);
-  --lift-ease:cubic-bezier(.35,0,.25,1);   /* word lift: starts softly, lands softly (same curve as liftE in JS) */
+  --lift-ease:cubic-bezier(.35,0,.25,1);   /* word / letter lift: starts softly, lands softly (same curve as liftE in JS) */
   color-scheme:dark;
 }
 /* base reset kept in the page itself, so it behaves the same when opened as a local file */
@@ -69,7 +69,11 @@ body.idle{cursor:none}
 .fps.slow b{color:#ffb35c}.fps.bad b{color:#ff6b6b}
 .glview{position:fixed;inset:0;width:100%;height:100%;z-index:0;pointer-events:none;display:none}
 /* cover panel (Apple Music style); position and sizes are set from coverLayout() so the page matches the export */
-.covpanel{position:fixed;z-index:0;pointer-events:none}
+.covpanel{position:fixed;z-index:0;pointer-events:none;transition:transform .75s var(--ease)}
+/* switched off (显示封面), and where it comes in from when switched on: outside the left edge (--away, set by
+   coverSlide in frame.js). It only moves, it does not fade. Either way it is off at once and well on its way before
+   the lyrics begin to follow, as if it pulled them along (COVER_GLIDE in background.js: they wait, then glide). */
+.covpanel.away{transform:translateX(var(--away,-100vw));transition:transform .7s cubic-bezier(.3,.1,.3,1)}
 .covart{position:relative;border-radius:var(--cr);background:#222 center/cover no-repeat;box-shadow:0 calc(var(--cs) * .04) calc(var(--cs) * .12) rgba(0,0,0,.45)}
 .covold{position:absolute;inset:0;border-radius:inherit;background:center/cover no-repeat;opacity:0;pointer-events:none}
 .covti,.covar{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-family:"Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif}
@@ -127,6 +131,9 @@ body[data-anim=fade] .line .w{animation-name:fadein}
 body[data-anim=rise] .line .w{animation-name:riseup}
 body[data-anim=karaoke] .line.live .pri{animation:kline .45s var(--ease) both}
 body[data-anim=karaoke] .line .w{position:relative;will-change:transform;animation:klift var(--kld,.7s) var(--lift-ease) var(--kdl,0s) both}
+/* a word whose letters rise one by one (view-dom.js): the letters (.c) lift, the word itself (.ws) stays put */
+body[data-anim=karaoke] .line .ws{animation-name:none}
+body[data-anim=karaoke] .line .c{display:inline-block;position:relative;will-change:transform;animation:klift var(--kld,.7s) var(--lift-ease) var(--kdl,0s) both}
 body[data-anim=karaoke] .line .pri{--c:100000px}
 body[data-anim=karaoke] .line .kb{--sx:calc(var(--c) - var(--o,0px));color:transparent;-webkit-text-fill-color:transparent;text-shadow:none;
   background:linear-gradient(90deg,#fff calc(var(--sx) - .225em),rgba(255,255,255,.89) calc(var(--sx) - .1125em),rgba(255,255,255,.65) var(--sx),rgba(255,255,255,.41) calc(var(--sx) + .1125em),rgba(255,255,255,.3) calc(var(--sx) + .225em));-webkit-background-clip:text;background-clip:text}
@@ -137,6 +144,12 @@ body[data-anim=karaoke] .line .kg{position:absolute;left:0;top:0;z-index:-1;colo
 @keyframes kline{from{opacity:0;transform:translateY(.2em)}to{opacity:1;transform:none}}
 @keyframes klift{from{transform:none}to{transform:translateY(-.05em)}}
 @keyframes kglow{to{opacity:1}}
+/* a long last word of a line: a little more light around it while it is sung, settling afterwards (holdGlow in
+   text-canvas.js; --hg how much, --hd how long the word lasts, --hdl when it starts) */
+body[data-anim=karaoke] .line .kh{position:absolute;left:0;top:0;z-index:-1;white-space:nowrap;color:transparent;-webkit-text-fill-color:transparent;pointer-events:none;
+  text-shadow:0 0 .28em rgba(255,255,255,var(--hg,0));opacity:0;animation:khup var(--hd,1s) ease-in-out var(--hdl,0s) both,khdown .8s ease-in-out calc(var(--hdl,0s) + var(--hd,1s)) forwards}
+@keyframes khup{to{opacity:1}}
+@keyframes khdown{from{opacity:1}to{opacity:0}}
 @keyframes leaveX{to{opacity:0;transform:translateY(var(--xdy,-.55em)) scale(var(--xsc,.94));filter:blur(var(--xbl,.14em))}}
 
 .drop{position:absolute;inset:12px;border:1px dashed var(--dim);border-radius:18px;display:grid;place-items:center;font-size:15px;color:var(--dim);opacity:0;pointer-events:none;transition:opacity .3s}
@@ -206,6 +219,7 @@ input[type=file]{display:none}
 .askrow img{width:88px;height:88px;border-radius:10px;object-fit:cover;flex:none;background:var(--faint)}
 .askrow h2{margin:0 0 6px}
 .askrow .note{margin:0}
+.asksecs{display:inline-block;min-width:2ch;margin-left:6px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--dim);font-variant-numeric:tabular-nums}   /* seconds left before "不用了" answers itself (showCoverAsk) */
 .libq{font:inherit;font-size:15px;color:var(--fg);background:var(--bg);border:1px solid var(--hair);border-radius:12px;padding:12px 14px;width:100%}
 .libq:focus-visible{outline:2px solid var(--fg);outline-offset:1px}
 .libres{display:flex;flex-direction:column;gap:4px;max-height:min(46vh,420px);overflow-y:auto;margin:-4px -6px 0;padding:0 6px}
@@ -272,6 +286,8 @@ body.fx-open .app{padding-right:calc(var(--drawer) + clamp(16px,3vw,48px))}
 }
 @media (prefers-reduced-motion:reduce){
   .line .w,.line .sub{animation:fade .3s linear both!important;filter:none}
+  .line .c{animation:none!important}
+  .covpanel,.covpanel.away{transition:none}
   .line.out,.line.out.xword .w,.line.out.xword .sub{animation:fadeout .3s linear forwards!important}
   @keyframes fade{from{opacity:0}to{opacity:1}}
   @keyframes fadeout{to{opacity:0}}
@@ -403,6 +419,22 @@ body.ui-glass .ddpop{background:rgba(34,34,38,.62);-webkit-backdrop-filter:blur(
 .ddt{flex:none;width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;visibility:hidden}
 .ddo[aria-selected="true"] .ddt{visibility:visible}
 .ddo[aria-selected="true"]{font-weight:700}
+
+/* ---- hover notes (js/ui/tooltip.js): every title="" is shown by the page in this card instead of the browser's box.
+   Frosted like the drop-down lists, never liquid glass: it often lies right on a glass button, and glass on glass
+   reads badly. Light and see-through; what is behind is dimmed a little and the text has a soft shadow, so the small
+   white text still reads over a bright cover. Always in the page, only hidden, so it can fade both ways. ---- */
+.tip{position:fixed;left:0;top:0;z-index:4000;box-sizing:border-box;width:max-content;max-width:min(260px,calc(100vw - 16px));padding:6px 10px;border-radius:9px;
+  border:1px solid var(--hair);background:rgba(24,24,26,.97);box-shadow:0 6px 20px rgba(0,0,0,.4);font-size:12px;line-height:1.45;letter-spacing:0;color:var(--fg);
+  overflow-wrap:anywhere;pointer-events:none;visibility:hidden;opacity:0;transform:scale(.96);transition:opacity .14s ease-out,transform .14s var(--ease),visibility 0s .14s}
+.tip.on{visibility:visible;opacity:1;transform:none;transition-delay:0s}
+body.idle .tip.on{opacity:0}                 /* the controls have faded away: so does the note of the one under the pointer */
+body.ui-glass .tip{background:rgba(56,56,62,.42);-webkit-backdrop-filter:blur(24px) saturate(1.8) brightness(.88);backdrop-filter:blur(24px) saturate(1.8) brightness(.88);border-color:transparent;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.28),inset 0 0 0 .5px rgba(255,255,255,.14),0 6px 20px rgba(0,0,0,.25);text-shadow:0 0 6px rgba(0,0,0,.35)}
+@media (prefers-reduced-motion:reduce){.tip{transform:none}}
+@media (prefers-contrast:more),(prefers-reduced-transparency:reduce){
+  body.ui-glass .tip{background:rgba(24,24,26,.97);-webkit-backdrop-filter:none;backdrop-filter:none;border-color:var(--faint);text-shadow:none}
+}
 
 /* ---- the bottom bar and its menu (js/menu.js) ----
    One bar holds play, progress, time and "more"; every other action is a row of the menu that opens from "more".

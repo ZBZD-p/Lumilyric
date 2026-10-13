@@ -1,5 +1,5 @@
 import { late } from '../core/late.js';
-import { $, mode, song } from '../core/lyrics.js';
+import { $, mode, playing, song } from '../core/lyrics.js';
 import { COVER_GLIDE, coverGlideNow, fx, hexRGB, lt, now } from '../core/settings.js';
 import { oneLine } from '../render/view-dom.js';
 import { buildTimeline, canvasMeasurer } from '../render/text-canvas.js';
@@ -427,7 +427,7 @@ function makeFlowGL(canvas){
   };
   const api = {
     canvas, dither: { amp: 1, cell: 1 }, fade: false, animating: false,
-    render(w, h, t){
+    render(w, h, t, flowT){                         // flowT: the time the flow moves by (the live page's own clock); t: the song's (the pulse)
       if (canvas.width !== w || canvas.height !== h){ canvas.width = w; canvas.height = h; }
       gl.viewport(0, 0, w, h);
       const cover = fx.bg.style !== 'blobs', wantVer = coverTexVer + (coverTex ? 0 : -1000), nowMs = performance.now();
@@ -471,7 +471,7 @@ function makeFlowGL(canvas){
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, coverTex || defaultCoverTex());
         texVer = wantVer;
       }
-      const T = t * fx.bg.speed, D = Math.hypot(w, h), pulse = bassAt(t), PL = pulseLook();
+      const T = (flowT ?? t) * fx.bg.speed, D = Math.hypot(w, h), pulse = bassAt(t), PL = pulseLook();
       const [h0, s0, l0] = rgb2hsl(P[0]);
       gl.uniform2f(u.res, w, h);
       gl.uniform3fv(u.base, hsl2rgb([h0, s0, l0 * 0.55]).map(v => v / 255));
@@ -518,8 +518,12 @@ function drawFlowBg(ctx, W, H, t){
   ctx.restore();
 }
 
-/* live page: a small canvas behind everything, stretched to the window by CSS */
-let bgLastT = -1, bgLastDraw = 0, bgDirty = true, liveGL;
+/* live page: a small canvas behind everything, stretched to the window by CSS.
+   The flow moves by a clock of its own (bgClock): it runs at the clock's pace while the song plays and stands still
+   while it is paused, but does not go with the song time when that jumps. Dragging the progress bar used to send the
+   background racing along with it. The pulse still goes by the song time (it is the bass at that moment). The export
+   draws by the song time alone (drawFlowBg), so a video is the same every time. */
+let bgLastT = -1, bgLastDraw = 0, bgDirty = true, liveGL, bgClock = null;
 function drawLiveBg(){
   const c = $('bgFlow'), on = fx.bg.mode === 'flow';
   c.classList.toggle('on', on);
@@ -528,17 +532,19 @@ function drawLiveBg(){
   const cv = late.coverVideo;
   if (cv && !cv.paused && coverLiveOn()) bgDirty = true;      // a moving cover: the background follows it, also while the song is paused
   if (ms - bgLastDraw < ((bassEnv || followBassOn()) && fx.bg.pulse > 0 ? 15 : 33) || (t === bgLastT && !bgDirty)) return;   // 30 fps, 60 when pulsing; nothing while paused
+  if (bgClock === null) bgClock = t;
+  if (playing) bgClock += Math.min(0.1, Math.max(0, (ms - bgLastDraw) / 1000));      // (a long gap: the page was hidden)
   bgLastDraw = ms; bgLastT = t; bgDirty = false;
   if (liveGL === undefined){ try { liveGL = makeFlowGL(c); if (liveGL) liveGL.fade = true; } catch(e){ liveGL = null; } }
   if (liveGL){
     const k = Math.min(devicePixelRatio || 1, 2560 / Math.max(1, innerWidth));
-    liveGL.render(Math.round(innerWidth * k), Math.round(innerHeight * k), t);
+    liveGL.render(Math.round(innerWidth * k), Math.round(innerHeight * k), t, bgClock);
     if (liveGL.animating) bgDirty = true;                      // keep drawing while the look changes, even when paused
     return;
   }
   const w = 320, h = Math.max(2, Math.round(320 * innerHeight / Math.max(1, innerWidth)));
   if (c.width !== w || c.height !== h){ c.width = w; c.height = h; }
-  c.getContext('2d').drawImage(flowFrame(w, h, t), 0, 0);
+  c.getContext('2d').drawImage(flowFrame(w, h, bgClock), 0, 0);
 }
 
 /* live page in WebGL mode: the same canvas drawing as the export, at screen resolution, through the bloom */

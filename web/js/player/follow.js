@@ -9,6 +9,7 @@ import { songStage, useScroll } from '../render/layout-scroll.js';
 import { exporting, setDelay } from '../export/export.js';
 import { applyFx, coverImgURL, setCoverAskPick, showCoverAsk } from '../ui/ui-effects.js';
 import { api, helper } from './helper.js';
+import { amllLookup } from './library.js';
 
 export {
   followOn,
@@ -38,9 +39,9 @@ function followTotal(){ return F.duration > 0 ? F.duration : song.length; }
 
 /* players without a timeline (Kugou): the helper counts time itself, dragging the bar tells it the real position */
 let followCalAt = 0, followQuiet = false;
-function followLoad(text, name, note){
+function followLoad(text, name, note, ttml){
   followQuiet = true;
-  try { return late.loadLRCText(text, name, note); } finally { followQuiet = false; }
+  try { return ttml ? late.loadTTMLText(text, name, note) : late.loadLRCText(text, name, note); } finally { followQuiet = false; }
 }
 /* Dragging the bar. Two kinds of players can be dragged (see followApply's $('seek').disabled):
    - canSeek (Spotify): the player accepts "jump to a position", so we tell it to, and it really moves.
@@ -48,7 +49,13 @@ function followLoad(text, name, note){
      count to where the song actually is.
    Either way the lyrics follow the finger at once; the network command is sent once dragging settles, so a drag
    that sweeps across the bar does not fire a seek on every step. */
-let followSeekT = 0;
+/* While the bar is being dragged, and until the player has got where it was dragged to, the bar's place is the one
+   shown: the player goes on reporting its old place for a while (the jump is only asked for once dragging settles, and
+   it takes the player a moment), and taking those reports pulled the lyrics back and forth. A report counts again
+   once it is within SEEK_HOLD.near s of the bar's place (moved on by the time since), or after SEEK_HOLD.max ms (the
+   player did not jump: it is believed again). */
+const SEEK_HOLD = { near: 1.5, max: 3000 };
+let followSeekT = 0, followSeekHold = null;               // { t, at }: the place the bar was put, and when
 function followSeek(t){
   if (followQuiet){ render(true); return; }          // applySource() seeks to 0 after loading lyrics: not a user drag
   if (!followInfo){ render(true); return; }
@@ -56,6 +63,7 @@ function followSeek(t){
   if (!canSeek && !noTimeline){ render(true); return; }   // player won't take a seek and keeps its own clock
   t = Math.max(0, Math.min(followTotal(), t));
   F.pos = t; F.at = Date.now(); followCorr = 0;
+  followSeekHold = { t, at: Date.now() };
   followCalAt = Date.now();                               // ignore snapshots computed before this move
   render(true);
   clearTimeout(followSeekT);
@@ -108,6 +116,15 @@ function setPlayIcon(p){
 /* ---- one snapshot from the helper */
 function followApply(s){
   if (s.at < followCalAt && s.trackId === F.trackId) return;      // computed before the last calibration
+  const hold = followSeekHold;
+  if (hold){
+    if (s.trackId !== F.trackId) followSeekHold = null;            // another song: the drag is over
+    else {
+      const expect = hold.t + (s.playing ? Math.max(0, (s.at - hold.at) / 1000) : 0);
+      if (Math.abs(s.position - expect) <= SEEK_HOLD.near || Date.now() - hold.at > SEEK_HOLD.max) followSeekHold = null;
+      else return;                                                 // still the player's old place: the bar's is shown
+    }
+  }
   const nowP = performance.now(), want = nowP < pauseAsked ? false : nowP < playAsked ? true : null;
   if (want !== null && s.trackId === F.trackId){
     if (!!s.playing !== want) return;     // the player has not caught up with the button pressed here yet
@@ -213,7 +230,7 @@ const followFlow = createSongFlow(songStage, {
   hasLines: () => song.lines.length > 0,
   blank: s => followBlank(s),
   load: (s, res) => {
-    if (!followLoad(res.lrc, [s.title, s.artist].filter(Boolean).join(' - '))) return false;
+    if (!followLoad(res.lrc, [s.title, s.artist].filter(Boolean).join(' - '), undefined, res.ttml)) return false;
     followMeta(s);
     followNote(`歌词来自 ${res.source}（${res.verbatim ? '逐字' : '逐行'}）`);
     return true;
@@ -235,9 +252,13 @@ function followTrack(s){
     lyrDone(); return;
   }
   followCover(s, myCover);
-  api('/api/nowplaying/lyrics', JSON.stringify({ trackId: s.trackId }), { 'Content-Type': 'application/json' })
+  // the community library (word-by-word, with background vocals) first; the helper's search (QQ Music, Kugou, NetEase
+  // through LDDC) is on its way meanwhile and is what is used when the library has not got the song
+  const found = api('/api/nowplaying/lyrics', JSON.stringify({ trackId: s.trackId }), { 'Content-Type': 'application/json' })
     .then(txt => JSON.parse(txt))
-    .catch(e => ({ lrc: null, reason: '找歌词出错：' + (e.message || e) }))
+    .catch(e => ({ lrc: null, reason: '找歌词出错：' + (e.message || e) }));
+  amllLookup(s.title, s.artist, s.album, s.duration || 0)
+    .then(a => a || found)
     .then(res => {
       if (followOn && followFlow.lyrics(performance.now(), seq, s, res)) followAlbum = res.album || '';
       lyrDone();
@@ -509,6 +530,7 @@ function setFollow(on, keepPref){
     assignPlaying(false); setPlayIcon(false);
     $('seek').disabled = true;                 // (the play button stays usable: it asks the player to play / pause)
     F = { pos: 0, at: 0, playing: false, duration: 0, trackId: '', app: '' };
+    followSeekHold = null;
     followCorr = 0; followErr = 0; followInfo = null; followLyr = ''; followSessKey = '';
     $('status').textContent = '跟随：正在连接播放器…';
     bassQ = []; bassWin = []; bassCur = bassPrev = bassSlow = 0;

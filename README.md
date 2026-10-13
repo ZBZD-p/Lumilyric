@@ -118,7 +118,7 @@ lumilyric/
 │  ├─ build_single.py    生成单文件版页面 dist/lumilyric.html
 │  ├─ build_desktop.bat  生成桌面版 dist\Lumilyric（见「桌面版」）
 │  └─ tidy_old_files.bat 旧版文件夹整理（只需运行一次）
-├─ tests/                测试：python tests/test_track_state.py、tests/test_lyrics_match.py、tests/test_disk_cache.py、tests/test_qt_stub.py、tests/test_audio_level.py；node tests/test_transition.js、tests/test_look_melt.js、tests/test_seg_thumb.js、tests/test_smooth_scroll.js、tests/test_tooltip.js、tests/test_letter_lift.js、tests/test_glide.js
+├─ tests/                测试：python tests/test_track_state.py、tests/test_lyrics_match.py、tests/test_disk_cache.py、tests/test_qt_stub.py、tests/test_audio_level.py；node tests/test_transition.js、tests/test_seek.js、tests/test_intro_dots.js、tests/test_look_melt.js、tests/test_seg_thumb.js、tests/test_smooth_scroll.js、tests/test_tooltip.js、tests/test_letter_lift.js、tests/test_glide.js
 ├─ models/               Whisper 模型（ggml-*.bin），不进仓库
 ├─ tools/                whisper.cpp、Python 环境、模型缓存、临时文件，不进仓库
 └─ examples/             示例歌词
@@ -142,6 +142,8 @@ lumilyric/
 | `render/text-canvas.js` | 画布文字：缓动、高亮扫光、文字缓存、单句画布渲染 |
 | `render/bloom.js` | WebGL 辉光 |
 | `render/song-transition.js` | 滚动歌词切歌：旧的拖出、新的拖入（纯逻辑，有测试） |
+| `render/seek-motion.js` | 滚动歌词跳转进度：点击拖出拖入、按住拖动跟手、小跳转滑动（纯逻辑，有测试） |
+| `render/intro-dots.js` | 滚动歌词前奏的三个小点：依次点亮、呼吸、结束前缩小消失（纯逻辑，有测试） |
 | `render/layout-scroll.js` | 滚动歌词布局 |
 | `render/layout-words.js` | 逐词布局和它的动画预设 |
 | `render/smooth-scroll.js` | 滚轮平滑滚动（有测试） |
@@ -194,7 +196,7 @@ lumilyric/
 
 - **识别**（没有歌词时）：whisper.cpp，有 NVIDIA 显卡时用 CUDA 版。由 `setup_whisper.bat` 下载程序和模型；模型文件放在 `models\`，也可以自己放别的 ggml 模型（认 `ggml-large-v3-q5_0.bin`、`ggml-large-v3.bin`、`ggml-large-v2-q5_0.bin`、`ggml-large-v3-turbo-q5_0.bin`）。
 - **逐字对齐**（已有歌词时）：wav2vec2 强制对齐，中文、英文各自用对应的模型，第一次使用时自动下载到 `tools\hf-cache`。
-- **歌词库**：AMLL TTML DB（社区逐词歌词）；运行过 `scripts\setup_lddc.bat` 后，还能搜 QQ 音乐 / 酷狗 / 网易云。
+- **歌词库**：AMLL TTML DB（社区逐词歌词，有些歌带伴唱）。跟随播放器时会先查它，有这首歌就用，没有再用 QQ 音乐 / 酷狗 / 网易云（需要先运行 `scripts\setup_lddc.bat`，装好后歌词库窗口里也能搜这三家）。
 - 本地程序只监听本机 `127.0.0.1`，上传的音频临时放在 `tools\server-tmp`，下次启动时清空。
 
 ## 导出

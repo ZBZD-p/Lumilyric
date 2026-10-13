@@ -893,7 +893,7 @@ class QQWindow:
                     elif not self._cdone and self._fed != tid and now - self._cfirst < 0.6:
                         time.sleep(0.15)                             # the page still shows the last song's picture:
                         continue                                     # hold the new song back a moment for its own
-                    NP.feed_external({"app": NP.EXT_APP, "appName": "QQ音乐（网页）",
+                    NP.feed_external({"app": NP.EXT_APP, "appName": "QQ音乐",
                                       "title": title, "artist": artist, "album": d.get("album") or "",
                                       "dur": float(d.get("dur") or 0), "pos0": pos0,
                                       "lu": lu, "read_at": now, "playing": playing,

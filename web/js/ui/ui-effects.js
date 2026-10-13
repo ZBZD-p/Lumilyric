@@ -32,7 +32,6 @@ function applyFx(){
   document.documentElement.style.setProperty('--glow-shadow', glowCss());
   document.documentElement.style.setProperty('--glow-shadow-sub', glowCss(glowGain(0.55)));   // translation line is 55% white
   document.body.dataset.anim = fx.anim;
-  document.querySelectorAll('#fxRender button').forEach(b => b.setAttribute('aria-pressed', b.dataset.r === fx.render));
   document.querySelectorAll('#fxLayout button').forEach(b => b.setAttribute('aria-pressed', b.dataset.l === fx.layout));
   $('fxLayoutNote').hidden = fx.layout === 'single';
   $('fxLayoutNote').textContent = fx.layout === 'word' ? '逐词：一次只显示一个词，英文按单词，中文用浏览器自带的分词拆成词语（标点跟着前一个词）。有逐字时间就按演唱时间切换，没有就按句子时长平均分配；双语模式下翻译整句显示在下方。'
@@ -58,9 +57,6 @@ function applyFx(){
   $('fxAM').checked = !!fx.am && !!fx.cover;
   $('amLyr').setAttribute('aria-pressed', String(fx.amLyrics !== false && !document.body.classList.contains('am-queue')));      // AM 布局: the lyrics button (js/ui/am.js); off while the play list stands in their place
   if (!fx.showFps) $('fps').hidden = true;
-  $('fxRenderNote').textContent = fx.render === 'webgl'
-    ? '显卡泛光（线性光、逐级缩放叠加）。网页上看到的和导出的视频是同一个画面。'
-    : '网页文字 + 文字阴影辉光，最省资源。想要更真实的泛光，换成 WebGL。';
   // The lyric canvas keeps its text sprites; only what is baked into them needs new ones: the renderer, and the glow
   // when it is not the GPU's bloom. Any other setting is read when a frame is drawn, so a redraw is enough. (Rebuilding
   // on every change made dragging any slider cost 10 ms and more a frame.)
@@ -181,7 +177,6 @@ $('fxAM').onchange = e => {           // close the settings drawer first, so it 
     setTimeout(() => setAM(on), FX_OUT);
   } else setAM(on);
 };
-document.querySelectorAll('#fxRender button').forEach(b => b.onclick = () => { fx.render = b.dataset.r; saveFx(); applyFx(); setCur(null); render(true); });
 document.querySelectorAll('#fxExit button').forEach(b => b.onclick = () => { fx.exit = b.dataset.exit; saveFx(); applyFx(); });
 $('fxExitDur').oninput = e => { fx.exitDur = e.target.value / 100; saveFx(); applyFx(); };
 document.querySelectorAll('#fxBg button').forEach(b => b.onclick = () => { fx.bg.mode = b.dataset.bg; if (b.dataset.style) fx.bg.style = b.dataset.style; saveFx(); applyFx(); });

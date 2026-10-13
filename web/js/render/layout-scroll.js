@@ -5,6 +5,9 @@ import { glideAt, glideKick } from '../core/glide.js';
 import { greedy, joinU, lineTexts, tokens, units } from './view-dom.js';
 import { HOLD, SWEEP, canvasMeasurer, clamp01, cubicBezier, drawOnColour, holdGlow, liftWord, rowOffs, setSpriteAlphaMul, spriteCache, sweepActive, sweepPos } from './text-canvas.js';
 import { createSongStage } from './song-transition.js';
+import { createSeekMotion } from './seek-motion.js';
+import { DOTS, introDots } from './intro-dots.js';
+import { duetSides } from '../core/core.js';
 
 export {
   bloomTL,
@@ -29,10 +32,24 @@ const useScroll = () => fx.layout === 'scroll';
 const SPRING_N = 1 - 8 * Math.exp(-7);
 const springE = p => p <= 0 ? 0 : p >= 1 ? 1 : (1 - (1 + 7 * p) * Math.exp(-7 * p)) / SPRING_N;   // critically damped spring, ends exactly at 1
 const SCROLL = { anchor: 0.36, dur: 0.95, lag: 0.055, maxLag: 0.4, dim: 0.32, fade: 0.6, lead: 0.12 };
+/* background vocals (L.bg, core.js): a block of smaller type under the line (over it, when they begin first) that opens
+   while the line is the current one and closes when it is not, as in Apple Music. Its size and its column, as shares of
+   the line's. How much of it is open is how "current" the line is (lineAct), so what moves is the same thing that
+   lights the line. */
+const BG_SIZE = 0.58, BG_W = 0.75;
+/* how far a line has come in (fin) and gone out (fout) of being the current one, each 0 .. 1, and the share of it that
+   is current (the line fades in when it starts and out when the next one starts) */
+const linePhase = (items, j, t) => [clamp01((t - items[j].t + SCROLL.lead) / SCROLL.fade),
+  j + 1 < items.length ? clamp01((t - items[j + 1].t + SCROLL.lead) / SCROLL.fade) : 0];
+const lineAct = (fin, fout) => clamp01(scrollE(fin) - scrollE(fout));
 // scrolling easing: starts gently (no jolt), glides, and settles over a long soft tail
 const scrollE = cubicBezier(0.36, 0, 0.14, 1);
+/* the song's artist, for telling the main voice of a duet from the other (duetSides): the header's (the player's when
+   following, the lyrics' own otherwise) */
+const duetArtist = () => song.meta.ar || ((typeof document !== 'undefined' && document.getElementById('songArtist') || {}).textContent || '').split(' · ')[0].trim();
 function scrollLayout(M2, W, H){
-  const key = song.lines.length + '|' + mode + '|' + W + 'x' + H + '|' + M2._x0;
+  const side = duetSides(song, duetArtist());
+  const key = song.lines.length + '|' + mode + '|' + W + 'x' + H + '|' + M2._x0 + '|' + side.map(Number).join('');
   // a few layouts per song are kept (the language being left and the one being switched to are both drawn for a moment)
   const mem = M2._slm || (M2._slm = new WeakMap());
   let byKey = mem.get(song);
@@ -42,20 +59,48 @@ function scrollLayout(M2, W, H){
   // a fixed-width column filled left to right (like Apple Music): every line breaks at the same right edge,
   // instead of short lines staying on one row and longer ones being split into two even halves
   const maxW = Math.min(W * (1 - 2 * (M2._x0 || 0.1)), M2.fs * 17), MW = Object.assign(Object.create(M2), { avail: () => maxW });
-  const wrap = (text, isSub) => {
-    if (!text) return [];
-    if (MW.w(text, isSub) <= maxW) return [text];
-    const g = greedy(units(text, isSub, MW), isSub, MW);
-    // no lonely last word: pull one word down from the row above when it still fits
-    const L = g.length;
-    if (L > 1 && g[L - 1].length === 1 && g[L - 2].length > 2){
-      const mv = g[L - 2].pop(), last = [{ ...mv, sp: false }, { ...g[L - 1][0], sp: g[L - 1][0].sp || mv.sp }];
-      if (MW.w(joinU(last), isSub) <= maxW) g[L - 1] = last; else g[L - 2].push(mv);
-    }
-    return g.map(joinU);
+  // text broken into rows no wider than width, as measured by Mx
+  const wrapper = (Mx, width) => {
+    const MX = Object.assign(Object.create(Mx), { avail: () => width });
+    return (text, isSub) => {
+      if (!text) return [];
+      if (MX.w(text, isSub) <= width) return [text];
+      const g = greedy(units(text, isSub, MX), isSub, MX);
+      // no lonely last word: pull one word down from the row above when it still fits
+      const L = g.length;
+      if (L > 1 && g[L - 1].length === 1 && g[L - 2].length > 2){
+        const mv = g[L - 2].pop(), last = [{ ...mv, sp: false }, { ...g[L - 1][0], sp: g[L - 1][0].sp || mv.sp }];
+        if (MX.w(joinU(last), isSub) <= width) g[L - 1] = last; else g[L - 2].push(mv);
+      }
+      return g.map(joinU);
+    };
   };
+  const wrap = wrapper(M2, maxW);
   const fs = M2.fs, sfs = M2.sfs, lineH = fs * 1.18, subH = sfs * 1.45, gap = fs * 0.62;
+  // background vocals (L.bg): smaller type, a narrower column, translation in the usual translation size
+  const BM = bgMeasurer(M2, W, H), bgW = maxW * BG_W, wrapBg = wrapper(BM, bgW), wrapBgSub = wrapper(M2, bgW);
+  const bgLayout = b => {
+    const { pri, sub } = lineTexts(b);
+    if (!pri) return null;
+    let k = 0;
+    const rows = wrapBg(pri, false).map(row => {
+      const toks = []; let x = 0;
+      for (const tk of tokens(row)){
+        const wd = BM.w(tk.trim() ? tk : ' ', false);
+        if (tk.trim()) toks.push({ s: tk, x, w: wd, k: k++ });
+        x += wd;
+      }
+      return { toks, width: x };
+    });
+    const subRows = wrapBgSub(sub, true), subWs = subRows.map(r => M2.w(r, true));
+    colW = Math.max(colW, ...rows.map(r => r.width), ...subWs);
+    const times = lineTokenTimes(b, pri), bl = BM.fs * 1.18, padT = fs * 0.15;
+    const seg = { t: b.t, end: b.end, times: times && times.length === k ? times : null, we: b.wt && b.wt.length === k ? b.wt[k - 1].e : undefined };
+    return { rows, subRows, subWs, n: k, kar: k && seg.times ? karaokeTimes(seg, k) : null, lineH: bl, padT, above: !!b.above,
+      h: padT + rows.length * bl + (subRows.length ? sfs * 0.45 + subRows.length * subH : 0) };
+  };
   const items = []; let y = 0, colW = 0;
+  items.bgs = [];                                  // the lines that have background vocals
   song.lines.forEach((L, i) => {
     const { pri, sub } = lineTexts(L);
     let k = 0;
@@ -74,9 +119,13 @@ function scrollLayout(M2, W, H){
     const times = lineTokenTimes(L, pri);
     const seg = { t: L.t, end: L.end, times: times && times.length === k ? times : null, we: L.wt && L.wt.length === k ? L.wt[k - 1].e : undefined };
     // word-by-word light only with real word times; otherwise the whole line lights up at once, like Apple Music
-    items.push({ i, y, h, rows, subRows, subWs, n: k, kar: k && seg.times ? karaokeTimes(seg, k) : null, t: L.t, end: L.end });
+    const bg = L.bg ? bgLayout(L.bg) : null;
+    if (bg) items.bgs.push(i);
+    items.push({ i, y, h, rows, subRows, subWs, n: k, kar: k && seg.times ? karaokeTimes(seg, k) : null, t: L.t, end: L.end, duet: !!side[i], bg });
     y += h + gap;
   });
+  // a long intro: the dots stand where the current line does and the lyrics wait one line lower (intro-dots.js)
+  if (items.length) items[0].intro = items[0].t >= DOTS.min ? lineH + gap : 0;
   const res = { song, key, items, lineH, subH, colW, maxW };
   if (byKey.size >= 4) byKey.delete(byKey.keys().next().value);
   byKey.set(key, res);
@@ -102,7 +151,33 @@ function scrollOff(items, j, t, anchor, curL){
     if (p <= 0) continue;
     off += (items[k - 1].y - items[k].y) * scrollE(p);
   }
-  return off;
+  return off + introRoom(items, j, t) + bgRoom(items, j, t);
+}
+/* the room the background vocals of the lines before line j have opened (px the column is lower by): only the line that
+   is current, and the one that has just stopped being, have any. Part of the offset, so everything that is worked
+   out from where lines stand (seeks, a language change, the dots) agrees with what is drawn. */
+function bgRoom(items, j, t){
+  let room = 0;
+  for (const k of items.bgs){
+    if (k >= j) break;
+    const [fin, fout] = linePhase(items, k, t);
+    if (fin > 0 && fout < 1) room += lineAct(fin, fout) * items[k].bg.h;
+  }
+  return room;
+}
+/* the room kept for the dots of a long intro (px the column is lower by): given up as the dots go, a step like the one
+   of a line change, the lines below trailing the same way */
+function introRoom(items, j, t){
+  const room = items[0].intro, since = t - items[0].t + DOTS.lead;
+  if (!room || since > SCROLL.dur + SCROLL.maxLag * 3) return 0;
+  const dr = fx.scrollDrag ?? 1;
+  return room * (1 - scrollE((since - Math.min(SCROLL.maxLag * dr, (j + 1) * SCROLL.lag * dr)) / SCROLL.dur));
+}
+/* the measurer (and sprites) of the background vocals' type, kept on the line's own */
+function bgMeasurer(M2, W, H){
+  const B = M2._bgM || (M2._bgM = canvasMeasurer(M2.ctx, W, H, Math.round(M2.fs * BG_SIZE), true));
+  if (!B.sprites) B.sprites = spriteCache(B);
+  return B;
 }
 function scrollM(M, W, H){
   const M2 = M._scrollM || (M._scrollM = canvasMeasurer(M.ctx, W, H, M.fs * 0.78, true));
@@ -146,12 +221,16 @@ function drawScrollOne(ctx, W, H, M, t, shiftFn, fade){
   const M2 = scrollM(M, W, H);
   const SP = M._probe ? M.sprites : M2.sprites, S = scrollLayout(M2, W, H), items = S.items;
   if (!items.length) return 'empty';
+  const BM = bgMeasurer(M2, W, H), SPB = M._probe ? M.sprites : BM.sprites;      // the type of the background vocals
   const fs = M2.fs, sfs = M2.sfs, bs = fs / 72, anchor = H * (M2._anc || SCROLL.anchor);
   // beside the cover the column starts at the area's left margin and is as wide as a row may be; on its own it is
   // centred in the frame and as wide as its widest row. al: where the rows sit in it (对齐, scrollAlignNow)
   const al = scrollAlignNow(), x0 = M2._x0 != null ? W * M2._x0 : (W - S.colW) / 2, span = M2._x0 != null ? S.maxW : S.colW;
-  const px = x0 + span * al;                               // px: the point a line grows from
-  const rowX = w => x0 + (span - w) * al;
+  // a duet's other voice (it.duet, duetSides) stands on the other side, as in Apple Music: the alignment mirrored
+  // (left ⇄ right; centred stays centred)
+  const alOf = it => it.duet ? 1 - al : al;
+  const pxOf = it => x0 + span * alOf(it);                 // the point a line grows from
+  const rowXOf = (it, w) => x0 + (span - w) * alOf(it);
   // which line is current; the column starts moving a moment before the next line begins, so the line arrives as it is sung
   const L = SCROLL.lead, { cur, curL } = scrollCur(items, t);
   const offFor = j => scrollOff(items, j, t, anchor, curL);
@@ -178,10 +257,10 @@ function drawScrollOne(ctx, W, H, M, t, shiftFn, fade){
     // while the column is dragged, only the lines that are on screen when it rests take part: lines below the screen
     // must not be carried into view as it moves, and the lines above must not be dragged down into it
     if (shiftFn && (it.y + off > H + fs * 2 || it.y + off + it.h < -fs * 2)) continue;
-    if (top > H + fs * 2 || top + it.h < -fs * 2) continue;
+    const bgH = it.bg ? it.bg.h : 0;
+    if (top > H + fs * 2 || top + it.h + bgH < -fs * 2) continue;
     // how "current" this line is (fades in when it starts, out when the next one starts)
-    const fin = clamp01((t - it.t + L) / SCROLL.fade), fout = j + 1 < items.length ? clamp01((t - items[j + 1].t + L) / SCROLL.fade) : 0;
-    const act = clamp01(scrollE(fin) - scrollE(fout));
+    const [fin, fout] = linePhase(items, j, t), act = lineAct(fin, fout);
     // each row melts away towards the edges of the area (by where the row itself is, so a line of two rows is not cut in
     // half by the edge); a row is gone before its middle reaches the edge. The current line never fades.
     const edge = y => Math.min(clamp01((y - fs * 0.15) / (fs * 2)), clamp01((H - fs * 0.15 - y) / (fs * 2.6)));
@@ -193,56 +272,87 @@ function drawScrollOne(ctx, W, H, M, t, shiftFn, fade){
     const scale = 0.94 + 0.06 * act;
     const base = SCROLL.dim + (1 - SCROLL.dim) * act;           // whole-line brightness when there are no word times
     ctx.save();
+    const px = pxOf(it), rowX = w => rowXOf(it, w);
     ctx.translate(px, top); ctx.scale(scale, scale); ctx.translate(-px, -top);
-    let ry = top + S.lineH / 2;
-    const SWo = it.kar ? rowOffs(it.rows) : null, SE = SWEEP.edge * fs;
-    const swc = it.kar && act > 0 ? sweepPos(it.kar, SWo.offs, SWo.ws, SE, t) : 0;
-    if (it.kar && act > 0 && sweepActive(it.kar, t)) moving = true;
-    for (const row of it.rows){
-      const ea = Math.max(act, edge(fade ? ry : ry - dyj));      // a language change: by where the row is now, so that it melts away as it reaches the edge
-      setSpriteAlphaMul(aPri * ea);
-      if (aPri * ea <= 0){ ry += S.lineH; continue; }
-      const rx = rowX(row.width);
-      for (const tk of row.toks){
-        const x = rx + tk.x;
-        if (it.kar && act > 0){
-          // karaoke inside the current line: dim base, bright sweep word by word
-          const q = clamp01((t - it.kar.st[tk.k]) / it.kar.du[tk.k]);
-          if (q > 0 && q < 1) moving = true;
-          const ex = swc - SWo.offs[tk.k];
-          if (ex - SE / 2 >= tk.w) lit++;
-          const hg = holdGlow(it.kar, tk.k, t) * act;
-          if (hg > 0) moving = true;
-          const parts = [];                            // the letters of a word that lifts letter by letter
-          if (liftWord(tk, M2, it.kar, t, SE, (l, s, dx, w) => {
-            const yy = ry - 0.05 * fs * l * act, xs = x + dx, e = ex - dx;       // e: the sweep edge, relative to this piece
-            if (hg > 0) SP.drawLit(ctx, s, false, xs, yy, hg, e - SE / 2 >= w + 1 ? Infinity : e, SE, true, hg, HOLD.blur * bs + blur);      // a long last word: a little more light around it, as far as the sweep has come
-            if (s !== tk.s) return parts.push({ s, dx, dy: yy - ry, w });
-            SP.drawLit(ctx, s, false, xs, yy, SCROLL.dim, Infinity, 0, false, undefined, blur);
-            if (e + SE / 2 > 0) SP.drawLit(ctx, s, false, xs, yy, act * (drawOnColour ? 1 : 1 - SCROLL.dim), e - SE / 2 >= w + 1 ? Infinity : e, SE, true, SCROLL.dim + (1 - SCROLL.dim) * act, blur);
-          }, blur > 0.3)) moving = true;      // still blurred as the line comes in: in one piece
-          if (parts.length) SP.drawLitGroup(ctx, parts, x, ry, SCROLL.dim, ex + SE / 2 > 0 ? act * (drawOnColour ? 1 : 1 - SCROLL.dim) : 0, ex, SE, SCROLL.dim + (1 - SCROLL.dim) * act, blur, tk.w);
-        } else {
-          SP.draw(ctx, tk.s, false, x, ry, it.kar ? SCROLL.dim : base, blur);
+    // one block of words (the line's rows, or its background vocals): rows laid out, kar its word times, Mx / SPx its type
+    // and sprites, fsx its size, lh the row height, ry the middle of the first row, mul how much of it is shown
+    const words = (rows, kar, Mx, SPx, fsx, lh, ry, mul) => {
+      const SWo = kar ? rowOffs(rows) : null, SE = SWEEP.edge * fsx, bsx = fsx / 72;
+      const swc = kar && act > 0 ? sweepPos(kar, SWo.offs, SWo.ws, SE, t) : 0;
+      if (kar && act > 0 && sweepActive(kar, t)) moving = true;
+      for (const row of rows){
+        const ea = Math.max(act, edge(fade ? ry : ry - dyj)) * mul;      // a language change: by where the row is now, so that it melts away as it reaches the edge
+        setSpriteAlphaMul(aPri * ea);
+        if (aPri * ea <= 0){ ry += lh; continue; }
+        const rx = rowX(row.width);
+        for (const tk of row.toks){
+          const x = rx + tk.x;
+          if (kar && act > 0){
+            // karaoke inside the current line: dim base, bright sweep word by word
+            const q = clamp01((t - kar.st[tk.k]) / kar.du[tk.k]);
+            if (q > 0 && q < 1) moving = true;
+            const ex = swc - SWo.offs[tk.k];
+            if (ex - SE / 2 >= tk.w) lit++;
+            const hg = holdGlow(kar, tk.k, t) * act;
+            if (hg > 0) moving = true;
+            const parts = [];                            // the letters of a word that lifts letter by letter
+            if (liftWord(tk, Mx, kar, t, SE, (l, s, dx, w) => {
+              const yy = ry - 0.05 * fsx * l * act, xs = x + dx, e = ex - dx;       // e: the sweep edge, relative to this piece
+              if (hg > 0) SPx.drawLit(ctx, s, false, xs, yy, hg, e - SE / 2 >= w + 1 ? Infinity : e, SE, true, hg, HOLD.blur * bsx + blur);      // a long last word: a little more light around it, as far as the sweep has come
+              if (s !== tk.s) return parts.push({ s, dx, dy: yy - ry, w });
+              SPx.drawLit(ctx, s, false, xs, yy, SCROLL.dim, Infinity, 0, false, undefined, blur);
+              if (e + SE / 2 > 0) SPx.drawLit(ctx, s, false, xs, yy, act * (drawOnColour ? 1 : 1 - SCROLL.dim), e - SE / 2 >= w + 1 ? Infinity : e, SE, true, SCROLL.dim + (1 - SCROLL.dim) * act, blur);
+            }, blur > 0.3)) moving = true;      // still blurred as the line comes in: in one piece
+            if (parts.length) SPx.drawLitGroup(ctx, parts, x, ry, SCROLL.dim, ex + SE / 2 > 0 ? act * (drawOnColour ? 1 : 1 - SCROLL.dim) : 0, ex, SE, SCROLL.dim + (1 - SCROLL.dim) * act, blur, tk.w);
+          } else {
+            SPx.draw(ctx, tk.s, false, x, ry, kar ? SCROLL.dim : base, blur);
+          }
         }
+        ry += lh;
       }
-      ry += S.lineH;
-    }
+      return ry;
+    };
+    // background vocals over the line push it down as they open (the block is at the line's top); under it they come
+    // out below its translation, and the lines below are pushed down by the same amount (bgRoom)
+    const bg = it.bg, mt = top + (bg && bg.above ? act * bg.h : 0);
+    words(it.rows, it.kar, M2, SP, fs, S.lineH, mt + S.lineH / 2, 1);
     if (it.subRows.length){
-      ry = top + it.rows.length * S.lineH + S.lineH / 2;
+      let ry = mt + it.rows.length * S.lineH + S.lineH / 2;
       ry += sfs * 0.45 - S.lineH / 2 + S.subH / 2;
       const subA = 0.24 + 0.36 * act;
       it.subRows.forEach((r, n) => { setSpriteAlphaMul(aSub * Math.max(act, edge(fade ? ry : ry - dyj))); SP.draw(ctx, r, true, rowX(it.subWs[n]), ry, subA, blur); ry += S.subH; });
     }
+    if (bg && act > 0){
+      // the rows of the block come apart as it opens (act = how far), and it is as faint as it is closed
+      const yb = bg.above ? top : top + it.h + bg.padT, u = act;
+      words(bg.rows, bg.kar, BM, SPB, BM.fs, bg.lineH * u, yb + u * bg.lineH / 2, u);
+      let ry = yb + u * (bg.rows.length * bg.lineH + sfs * 0.45 + S.subH / 2);
+      const subA = 0.24 + 0.36 * act;
+      bg.subRows.forEach((r, n) => { setSpriteAlphaMul(aSub * u * Math.max(act, edge(fade ? ry : ry - dyj))); SP.draw(ctx, r, true, rowX(bg.subWs[n]), ry, subA, blur); ry += S.subH * u; });
+    }
     setSpriteAlphaMul(1);
     ctx.restore();
+  }
+  // the dots of a long intro, in the room kept above the first line: they go with the column (and with whatever moves it)
+  const dots = items[0].intro && first === 0 ? introDots(t, items[0].t) : null;
+  if (dots && dots.alpha > 0 && ctx.arc){
+    const dy = shiftFn ? shiftFn(0, first) : fade ? fade.dy(0) : 0, a = dots.alpha * (fade ? fade.alpha : 1);
+    const r = fs * DOTS.size / 2, pitch = fs * DOTS.pitch, w = pitch * 2 + r * 2;
+    const cx = x0 + (span - w) * al + w / 2, cy = items[0].y + offFor(0) + dy - items[0].intro + S.lineH / 2 + fs * DOTS.drop;
+    ctx.translate(cx, cy); ctx.scale(dots.scale, dots.scale);
+    dots.dots.forEach((lum, k) => {
+      // (their glow is the GPU's bloom, like the text's)
+      ctx.globalAlpha = lum * a; ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc((k - 1) * pitch, 0, r, 0, Math.PI * 2); ctx.fill();
+    });
   }
   ctx.restore();
   // still moving while any step of the column is under way
   if (curL >= 0){
     for (let k = Math.max(1, curL - 1); k <= curL; k++) if (t - items[k].t + L < SCROLL.dur + SCROLL.maxLag * Math.max(1, fx.scrollDrag ?? 1)) moving = true;
   }
-  return moving ? null : 'sc' + curL + ':' + lit;
+  if (items[0].intro && t - items[0].t + DOTS.lead > 0 && t - items[0].t + DOTS.lead < SCROLL.dur + SCROLL.maxLag * Math.max(1, fx.scrollDrag ?? 1)) moving = true;
+  // (the dots change with every moment of the song, and stand still when it does)
+  return moving ? null : 'sc' + curL + ':' + lit + (dots ? ':' + t.toFixed(3) : '');
 }
 
 /* song change (follow mode): the phases are driven by song-transition.js and follow.js; this only draws what the
@@ -271,14 +381,47 @@ function drawModeFade(ctx, W, H, M, t){
   drawScrollOne(ctx, W, H, M, t, null, { dy: j => (topO(j) - topN(j)) * (1 - e), alpha: a, same, priSame: 1 });
   return true;
 }
+/* a jump in time (a seek), live only: how the lines get from where they are shown to the new place is worked out in
+   seek-motion.js (the states, and what moves when, are described there); this hands it the layout and draws what it
+   says. */
+const seekMotion = createSeekMotion(scrollE);
+function seekGeo(M2, W, H){
+  const items = scrollLayout(M2, W, H).items, anchor = H * (M2._anc || SCROLL.anchor), dr = fx.scrollDrag ?? 1;
+  return { key: items, H, reach: M2.fs * 2, gap: M2.fs * 0.62, h: j => items[j].h + (items[j].bg ? items[j].bg.h : 0),
+    cur: t => scrollCur(items, t).curL,
+    tops: t => { const c = scrollCur(items, t).curL; return items.map((it, j) => it.y + scrollOff(items, j, t, anchor, c)); },
+    glide: { dur: SCROLL.dur, lag: SCROLL.lag * dr, maxLag: SCROLL.maxLag * dr } };
+}
+/* the progress bar: pressed, moved, let go (on the window: the pointer may leave the bar while it is held) */
+if (typeof document !== 'undefined'){
+  const bar = document.getElementById('seek');
+  if (bar){
+    bar.addEventListener('pointerdown', e => seekMotion.press(e.clientX));
+    addEventListener('pointermove', e => seekMotion.pointer(e.clientX));
+    addEventListener('pointerup', () => seekMotion.release()); addEventListener('pointercancel', () => seekMotion.release());
+  }
+}
 function drawScroll(ctx, W, H, M, t){
   if (typeof late.exporting !== 'undefined' && late.exporting) return drawScrollOne(ctx, W, H, M, t);
-  if (modeFade && drawModeFade(ctx, W, H, M, t)) return null;      // still moving
+  if (modeFade && drawModeFade(ctx, W, H, M, t)){ seekMotion.reset(); return null; }      // still moving
   const D = H + M.fs * 4;
   const r = songStage.step(performance.now(), t);
-  if (!r.draw) return 'empty';                           // lyrics locked and gone, waiting for the next song's
-  const k = drawScrollOne(ctx, W, H, M, r.draw === 'out' ? r.t : t, r.shift ? (j, f) => r.shift(j, f, D) : null);
-  return r.busy ? null : k;
+  if (!r.draw){ seekMotion.reset(); return 'empty'; }    // lyrics locked and gone, waiting for the next song's
+  if (r.shift || r.draw === 'out'){                      // a song change moves the column itself
+    seekMotion.reset();
+    const k = drawScrollOne(ctx, W, H, M, r.draw === 'out' ? r.t : t, r.shift ? (j, f) => r.shift(j, f, D) : null);
+    return r.busy ? null : k;
+  }
+  const geo = seekGeo(scrollM(M, W, H), W, H);
+  if (!geo.key.length){ seekMotion.reset(); const k = drawScrollOne(ctx, W, H, M, t); return r.busy ? null : k; }
+  const sk = seekMotion.step(performance.now(), t, geo, matchMedia('(prefers-reduced-motion:reduce)').matches);
+  for (const x of sk.outs){                              // earlier places, on their way out (or melting away)
+    const sh = j => x.off[j];
+    drawScrollOne(ctx, W, H, M, x.t, sh, x.melting ? { dy: sh, alpha: Math.max(0, x.alpha), same: () => false, priSame: 0 } : undefined);
+  }
+  const L = sk.live, k = L && sk.byRest ? drawScrollOne(ctx, W, H, M, sk.t, j => L[j])
+    : drawScrollOne(ctx, W, H, M, sk.t, null, L ? { dy: j => L[j], alpha: 1, same: () => true, priSame: 1 } : undefined);
+  return r.busy || sk.busy ? null : k;
 }
 
 let bloomTL = null;                                         // the text layer that feeds the bloom (export)

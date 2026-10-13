@@ -91,7 +91,7 @@ async function qLoad(){
   $('amQHist').hidden = !past.length;
   $('amQHistList').innerHTML = past.map(qRow).join('');
   $('amQList').innerHTML = next.map((x, k) => qRow(x, (now >= 0 ? now + 1 : 0) + k)).join('');
-  $('amQSrc').textContent = `来自 QQ 音乐网页版 · 共 ${r.items.length} 首`;
+  $('amQSrc').textContent = `来自 QQ 音乐 · 共 ${r.items.length} 首`;
   $('amQEmpty').textContent = next.length ? '' : '后面没有歌了。';
   $('amQEmpty').hidden = !!next.length;
   if (now !== qNow){                               // 继续播放 at the top; the history is above it, out of view

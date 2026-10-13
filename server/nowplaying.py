@@ -152,7 +152,7 @@ def available():
 
 def app_info(app):
     if (app or "") == EXT_APP:
-        return "QQ音乐（网页）", "QQ音乐"           # lyrics searched on QQ, same as the desktop QQ Music
+        return "QQ音乐", "QQ音乐"                   # shown as QQ Music; lyrics searched on QQ, same as the desktop QQ Music
     low = (app or "").lower()
     for key, name, src in KNOWN_APPS:
         if key in low:

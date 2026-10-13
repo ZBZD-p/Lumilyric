@@ -1,5 +1,5 @@
 import { late } from './late.js';
-import { CHARWISE, CJK, CJK_PUNCT, SAMPLE, parseLRC } from './core.js';
+import { CHARWISE, CJK, CJK_PUNCT, SAMPLE, bgAdd, mergeSimultaneous, parseLRC, sungEnd } from './core.js';
 
 export {
   $,
@@ -66,9 +66,15 @@ function parseTTML(text){
     else if (k === 'album' && !meta.al) meta.al = v;
   }
   const role = el => el.getAttribute('ttm:role') || el.getAttributeNS('http://www.w3.org/ns/ttml#metadata', 'role') || '';
-  const lines = [];
-  for (const p of doc.getElementsByTagNameNS('*', 'p')){
-    const chars = [];             // { c, s, e }: s/e from the word span, absent for plain text between spans
+  // who sings each line (duets): ttm:agent on the line; the agents in the head, a group one meaning "together" (合)
+  const agentOf = el => el.getAttribute('ttm:agent') || el.getAttributeNS('http://www.w3.org/ns/ttml#metadata', 'agent') || '';
+  const groupIds = new Set();
+  for (const a of doc.getElementsByTagNameNS('*', 'agent')) if ((a.getAttribute('type') || '') === 'group') groupIds.add(a.getAttribute('xml:id') || a.getAttribute('id'));
+  /* the words under a node, as a line: text, translation and word times. Background vocals under it (x-bg) are not
+     read: the nodes are handed back (bgs). bare: without the brackets background vocals are written in. null when
+     there are no words */
+  const read = (top, bare) => {
+    const chars = [], bgs = [];   // chars: { c, s, e }: s/e from the word span, absent for plain text between spans
     let trans = '';
     const walk = node => {
       for (const n of node.childNodes){
@@ -76,23 +82,28 @@ function parseTTML(text){
         if (n.nodeType !== 1) continue;
         const r = role(n);
         if (r === 'x-translation'){ if (!trans) trans = n.textContent.trim(); continue; }
-        if (r === 'x-roman' || r === 'x-bg') continue;          // romanisation and background vocals are left out
+        if (r === 'x-bg'){ bgs.push(n); continue; }
+        if (r === 'x-roman') continue;                           // romanisation is left out
         if (n.getElementsByTagName('*').length){ walk(n); continue; }
         const b = ttmlTime(n.getAttribute('begin')), e = ttmlTime(n.getAttribute('end'));
         for (const c of n.textContent) chars.push({ c, s: b, e });
       }
     };
-    walk(p);
+    walk(top);
     // collapse whitespace the same way the page displays text
     const out = [];
     for (const ch of chars){
       if (/\s/.test(ch.c)){ if (out.length && out[out.length - 1].c !== ' ') out.push({ c: ' ' }); }
       else out.push(ch);
     }
+    if (bare){
+      while (out.length && /[(（\s]/.test(out[0].c)) out.shift();
+      while (out.length && /[)）\s]/.test(out[out.length - 1].c)) out.pop();
+    }
     while (out.length && out[out.length - 1].c === ' ') out.pop();
     const textMain = out.map(x => x.c).join('');
-    if (!textMain) continue;
-    const pb = ttmlTime(p.getAttribute('begin')), pe = ttmlTime(p.getAttribute('end'));
+    if (!textMain) return { bgs };
+    const pb = ttmlTime(top.getAttribute('begin')), pe = ttmlTime(top.getAttribute('end'));
     // word timings in the page's own token order (characters for Chinese/Japanese, words otherwise)
     const groups = [];
     if (CHARWISE.test(textMain)) out.forEach(x => { if (x.c !== ' ') groups.push([x]); });
@@ -129,10 +140,23 @@ function parseTTML(text){
     const L = { t: anyTimed ? wt[0].s : (isFinite(pb) ? pb : 0), en: hanOnly ? '' : textMain, zh: hanOnly ? textMain : trans };
     if (anyTimed){ L.wt = wt; L.wtText = textMain; }
     L.pEnd = isFinite(pe) ? pe : null;
+    return { L, bgs };
+  };
+  let lines = [];
+  for (const p of doc.getElementsByTagNameNS('*', 'p')){
+    const main = read(p), bgs = main.bgs.map(n => read(n, true).L).filter(Boolean).sort((a, b) => a.t - b.t);
+    const L = main.L || bgs.shift();           // background vocals with no line to stand under are the line
+    if (!L) continue;
+    // background vocals (core.js, bgAdd): over the line when they begin before it does, and the line begins with them
+    for (const b of bgs) bgAdd(L, { t: b.t, end: sungEnd(b), en: b.en, zh: b.zh, wt: b.wt, wtText: b.wtText });
+    if (L.bg && L.bg.t < L.t - 0.05){ L.bg.above = true; L.t = L.bg.t; }
+    const ag = agentOf(p) || (p.parentNode && p.parentNode.getAttribute && agentOf(p.parentNode));
+    if (ag) L.who = groupIds.has(ag) ? '合' : ag;
     lines.push(L);
   }
   lines.sort((a, b) => a.t - b.t);
-  lines.forEach((l, i) => l.end = lines[i + 1] ? lines[i + 1].t : (l.pEnd || l.t + 4));
+  lines = mergeSimultaneous(lines);            // lines sung while another is become its background vocals too
+  lines.forEach((l, i) => l.end = lines[i + 1] ? lines[i + 1].t : Math.max(l.pEnd || l.t + 4, l.bg ? l.bg.end : 0));
   const body = doc.getElementsByTagNameNS('*', 'body')[0];
   const dur = body ? ttmlTime(body.getAttribute('dur')) : NaN;
   const last = lines.length ? lines[lines.length - 1].end : 0;
@@ -444,16 +468,18 @@ function toWordLRC(song){
   const out = [];
   ['ti', 'ar', 'al'].forEach(k => song.meta[k] && out.push(`[${k}:${song.meta[k]}]`));
   out.push(song.whisperOnly ? '[by:Whisper 识别 · 逐词]' : '[by:逐词对齐 · Whisper 时间 + LRC 文本]');
-  song.lines.forEach(L => {
-    const main = L.wtText ?? (L.en || L.zh);
-    const toks = main ? late.tokens(main) : [];
-    if (L.wt && toks.filter(x => x.trim()).length === L.wt.length){
-      let k = 0, line = '';
-      for (const x of toks){ if (!x.trim()){ line += ' '; continue; } line += `<${T(L.wt[k].s)}>${x}`; k++; }
-      out.push(`[${T(L.t)}]` + line + `<${T(L.wt[L.wt.length - 1].e)}>`);
-    } else if (main) out.push(`[${T(L.t)}]${main}`);
-    const other = main === L.en ? L.zh : '';
-    if (other) out.push(`[${T(L.t)}]${other}`);
+  song.lines.forEach(L0 => {
+    for (const L of L0.bg ? [L0, L0.bg] : [L0]){          // background vocals follow their line, with their own times
+      const main = L.wtText ?? (L.en || L.zh);
+      const toks = main ? late.tokens(main) : [];
+      if (L.wt && toks.filter(x => x.trim()).length === L.wt.length){
+        let k = 0, line = '';
+        for (const x of toks){ if (!x.trim()){ line += ' '; continue; } line += `<${T(L.wt[k].s)}>${x}`; k++; }
+        out.push(`[${T(L.t)}]` + line + `<${T(L.wt[L.wt.length - 1].e)}>`);
+      } else if (main) out.push(`[${T(L.t)}]${main}`);
+      const other = main === L.en ? L.zh : '';
+      if (other) out.push(`[${T(L.t)}]${other}`);
+    }
   });
   return out.join('\n') + '\n';
 }

@@ -1,7 +1,9 @@
 import { late } from '../core/late.js';
-import { $, audio, audioFile, lrcSong } from '../core/lyrics.js';
+import { $, audio, audioFile, lrcSong, parseTTML } from '../core/lyrics.js';
+import { amllPick } from './amll-match.js';
 
 export {
+  amllLookup,
   closeLib,
 };
 
@@ -12,7 +14,7 @@ const AMLL_BASES = [
   'https://cdn.jsdelivr.net/gh/amll-dev/amll-ttml-db@main/',       // mirrors, for networks where GitHub is slow or blocked
   'https://fastly.jsdelivr.net/gh/amll-dev/amll-ttml-db@main/'
 ];
-let amllBase = 0, amllIndex = null, amllLoading = null;
+let amllBase = 0, amllIndex = null, amllLoading = null, amllDownAt = 0;      // amllDownAt: when the library last could not be reached
 async function amllFetch(path){
   let lastErr;
   for (let k = 0; k < AMLL_BASES.length; k++){
@@ -45,10 +47,37 @@ function loadAmllIndex(){
         hay: libNorm([...(m.musicName || []), ...artists, ...(m.album || [])].join('|')) };
       byKey.set(libNorm(name) + '|' + libNorm(artists.join('/')), e);      // later submissions replace earlier ones
     }
-    amllIndex = [...byKey.values()];
+    amllIndex = [...byKey.values()]; amllDownAt = 0;
     return amllIndex;
-  }).finally(() => { amllLoading = null; });
+  }).catch(e => { amllDownAt = Date.now(); throw e; }).finally(() => { amllLoading = null; });
   return amllLoading;
+}
+/* The library asked on its own, while following a player (follow.js): the song's lyrics when the library has the song,
+   otherwise null at once or after at most a few seconds, so that the other source (LDDC) is not kept waiting. A
+   library that cannot be reached is not asked again for a while. Gives a lookup result like the helper's
+   (`ttml`: the text is TTML, not LRC), and never fails. */
+const AMLL_AUTO = { indexWait: 5000, fileWait: 7000, retry: 5 * 60 * 1000, overrun: 8, keep: 12 };
+const amllFiles = new Map();                        // file -> TTML text of the songs fetched lately
+const within = (p, ms) => Promise.race([p, new Promise((_, no) => setTimeout(() => no(new Error('timeout')), ms))]);
+async function amllLookup(title, artist, album, duration){
+  try {
+    if (!amllIndex){
+      if (Date.now() - amllDownAt < AMLL_AUTO.retry) return null;
+      await within(loadAmllIndex(), AMLL_AUTO.indexWait);
+    }
+    const e = amllPick(amllIndex, title, artist, album);
+    if (!e) return null;
+    let text = amllFiles.get(e.file);
+    if (text === undefined){
+      text = await within(amllFetch('raw-lyrics/' + e.file), AMLL_AUTO.fileWait);
+      amllFiles.set(e.file, text);
+      if (amllFiles.size > AMLL_AUTO.keep) amllFiles.delete(amllFiles.keys().next().value);
+    }
+    // lyrics that go on after the song has ended are those of a longer version
+    const p = parseTTML(text);
+    if (!p.lines.length || (duration > 0 && p.length > duration + AMLL_AUTO.overrun)) return null;
+    return { lrc: text, ttml: true, source: 'AMLL TTML DB', title: e.name, verbatim: p.lines.some(l => l.wt), score: 100, album: e.album };
+  } catch (err){ return null; }
 }
 function libSearch(q){
   const terms = q.trim().split(/\s+/).map(libNorm).filter(Boolean);
@@ -69,7 +98,7 @@ function libSearch(q){
 let libSrc = 'lddc', lddcRes = [], lddcFor = '', lddcSeq = 0, lddcBusy = false;
 try { libSrc = localStorage.getItem('lrc-libsrc') || 'lddc'; } catch(e){}
 const LIB_NOTES = {
-  amll: '歌词由 <a href="https://github.com/amll-dev/amll-ttml-db" target="_blank" rel="noopener">AMLL TTML DB</a> 的贡献者手工制作，精度很高，但只有约 2900 首。载入后对照音频听一下，版本不同（现场、剪辑版）时可以用「偏移」微调。',
+  amll: '歌词由 <a href="https://github.com/amll-dev/amll-ttml-db" target="_blank" rel="noopener">AMLL TTML DB</a> 的贡献者手工制作，精度很高，伴唱也有，但收录的歌有限。载入后对照音频听一下，版本不同（现场、剪辑版）时可以用「偏移」微调。',
   lddc: '通过 <a href="https://github.com/chenmozhijin/LDDC" target="_blank" rel="noopener">LDDC</a> 搜索三个平台，热门歌大多有逐字歌词。<b>●</b> 表示时长和你载入的音频相差不到 3 秒，多半是同一个版本。歌词版权归各平台，仅供个人使用。'
 };
 function setLibSrc(v){

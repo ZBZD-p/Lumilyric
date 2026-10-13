@@ -649,10 +649,21 @@ body.am.am-qx #glView{transition:opacity .35s var(--ease)}
 .amui .ampill .amb[aria-pressed="false"]{background:rgba(255,255,255,.2);color:#fff}      /* the lyrics are switched off */
 .amui .ampill .amb[aria-pressed="false"]:hover{background:rgba(255,255,255,.34)}
 .amfabs text{font-family:var(--zh)}
-body.am #seek{height:20px}
-body.am #seek::-webkit-slider-runnable-track{height:9px;border-radius:4.5px;background:linear-gradient(#fff,#fff) 0/var(--p,0%) 100% no-repeat,rgba(255,255,255,.28)}
-body.am #seek::-moz-range-track{height:9px;border-radius:4.5px;background:rgba(255,255,255,.28)}
-body.am #seek::-moz-range-progress{height:9px;border-radius:4.5px;background:#fff}
+/* the progress bar: thinner at rest, thicker under the pointer (and while it is dragged), as in Apple Music. The input is
+   20px tall all the time and the track keeps its size: only the painted bar (--bh, its height, a registered length so
+   that it can be animated) changes, which is drawn at fractions of a pixel and so grows smoothly. The knob (the
+   base layout's dot) sits on the track's middle all the time. */
+@property --bh{syntax:'<length>';inherits:true;initial-value:2px}
+.bar #seek{--bh:2px;transition:--bh .28s cubic-bezier(.4,0,.2,1)}
+.bar #seek:hover,.bar #seek:active{--bh:4px}
+.bar #seek::-webkit-slider-runnable-track{height:4px;border-radius:2px;background:linear-gradient(var(--fg),var(--fg)) 0 50%/var(--p,0%) var(--bh) no-repeat,linear-gradient(var(--faint),var(--faint)) 0 50%/100% var(--bh) no-repeat}
+.bar #seek::-webkit-slider-thumb{margin-top:-4px}
+body.am #seek{height:20px;--bh:5px;transition:--bh .28s cubic-bezier(.4,0,.2,1)}
+body.am #seek:hover,body.am #seek:active{--bh:10px}
+body.am #seek::-webkit-slider-runnable-track{height:10px;border-radius:5px;background:linear-gradient(#fff,#fff) 0 50%/var(--p,0%) var(--bh) no-repeat,linear-gradient(rgba(255,255,255,.28),rgba(255,255,255,.28)) 0 50%/100% var(--bh) no-repeat}
+body.am #seek::-moz-range-track{height:5px;border-radius:2.5px;background:rgba(255,255,255,.28)}
+body.am #seek::-moz-range-progress{height:5px;border-radius:2.5px;background:#fff}
+body.am #seek:hover::-moz-range-track,body.am #seek:hover::-moz-range-progress,body.am #seek:active::-moz-range-track,body.am #seek:active::-moz-range-progress{height:10px}
 body.am #seek::-webkit-slider-thumb{width:9px;height:9px;margin-top:0;background:transparent}
 body.am #seek::-moz-range-thumb{width:9px;height:9px;background:transparent}
 body.am .status{padding:0;font-size:11px}

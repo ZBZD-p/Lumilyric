@@ -1,7 +1,7 @@
 import { late } from './core/late.js';
 import { parseLRC } from './core/core.js';
 import { $, alignStats, assignMode, audio, buildWordTiming, isTTML, lrcName, lrcSong, mode, parseTTML, playing, setAlignStats, setAudio, setAudioFile, setBase, setCur, setLrcName, setLrcRawText, setLrcSong, setPreferAlign, setSong, setSource, setUploadedId, setWhisperWords, song, songFromWhisper, source, toWordLRC, whisperName, whisperWords } from './core/lyrics.js';
-import { fx, lyricDelay, now, seek, setPlaying, togglePlay, total } from './core/settings.js';
+import { fx, lyricDelay, now, prof, seek, setPlaying, togglePlay, total } from './core/settings.js';
 import { render, segCache, updateSweepDOM } from './render/view-dom.js';
 import { analyzeBass, drawLiveBg, drawLiveGL, liveBloom, liveGLx } from './background/background.js';
 import { extractCover, setCover } from './background/cover-extract.js';
@@ -23,6 +23,10 @@ export {
 /* Performance meter, main loop, controls, loading files, keyboard */
 /* frame-rate meter: frames counted over half a second, plus the slowest frame in that time */
 let fpsN = 0, fpsT0 = 0, fpsLast = 0, fpsWorst = 0;
+/* where the time of a frame went (profLast: the frame before the one being started; profWorst: the one before the
+   slowest interval of this half second): script time in the parts below, the rest of the interval is the browser's own
+   (layout of the page, painting, compositing, waiting for the display) */
+let profLast = null, profWorst = null;
 let gpuStr;
 function gpuName(){                       // the graphics card, as the browser reports it (shortened)
   if (gpuStr !== undefined) return gpuStr;
@@ -44,7 +48,7 @@ function fpsTick(){
   const el = $('fps');
   if (!fx.showFps){ if (!el.hidden) el.hidden = true; return; }
   const t = performance.now();
-  if (fpsLast) fpsWorst = Math.max(fpsWorst, t - fpsLast);
+  if (fpsLast && t - fpsLast > fpsWorst){ fpsWorst = t - fpsLast; profWorst = profLast; }
   fpsLast = t; fpsN++;
   if (!fpsT0) fpsT0 = t;
   if (t - fpsT0 >= 500){
@@ -57,21 +61,34 @@ function fpsTick(){
     const bg = $('bgFlow'), bgOn = fx.bg.mode === 'flow' && bg.width > 2;
     const how = useWebGL() && liveBloom ? 'WebGL' : canvasView ? '画布' : '网页';
     const extra = [useScroll() ? '滚动歌词' : '', useWordMode() ? '逐词' : '', useCoverPanel() ? '封面' : '', fx.glow.on ? '辉光' : ''].filter(Boolean).join(' · ');
-    // 精简显示 (fx.perfLite): the frame rate and the slowest frame, nothing else
-    el.innerHTML = `<b>${Math.round(fps)}</b> FPS · 最慢一帧 ${fpsWorst.toFixed(0)} ms` + (fx.perfLite ? '' : '\n' +
+    // the slowest frame: how much of it was this page's script, and where that went
+    let where = '';
+    if (profWorst){
+      const p = profWorst, parts = [['重建', p.build], ['排版', p.layout], ['烘焙', p.bake], ['绘制', Math.max(0, p.anchor + p.draw - p.layout - p.bake)],
+        ['辉光', p.bloom], ['背景', p.bg], ['玻璃', p.glass], ['页面', p.dom]].filter(x => x[1] >= 0.5);
+      where = `\n  脚本 ${p.total.toFixed(0)} ms（${parts.map(x => x[0] + ' ' + x[1].toFixed(0)).join(' · ') || '各项都不到 1 ms'}）· 其余 ${Math.max(0, fpsWorst - p.total).toFixed(0)} ms 是浏览器自己（布局、合成、等显示）`;
+    }
+    // 精简显示 (fx.perfLite): the frame rate and the slowest frame, and where it went; nothing else
+    el.innerHTML = `<b>${Math.round(fps)}</b> FPS · 最慢一帧 ${fpsWorst.toFixed(0)} ms` + where + (fx.perfLite ? '' : '\n' +
       `${how}渲染${extra ? ' · ' + extra : ''}\n` +
       `歌词 ${rw}×${rh}（窗口 ${innerWidth}×${innerHeight} × ${+dpr.toFixed(2)}）` +
       (bgOn ? `\n背景 ${bg.width}×${bg.height}${bg.width < Math.round(innerWidth * dpr) - 1 ? '（放大铺满窗口）' : ''}` : '') +
       (gpuName() ? `\n${gpuName()}` : ''));
-    fpsN = 0; fpsT0 = t; fpsWorst = 0;
+    fpsN = 0; fpsT0 = t; fpsWorst = 0; profWorst = null;
   }
 }
 function tick(){
   fpsTick();
+  const profOn = prof.on = fx.showFps;
+  let m0 = 0, m1 = 0, m2 = 0, m3 = 0;
+  if (profOn){ prof.build = prof.anchor = prof.draw = prof.layout = prof.bake = prof.bloom = 0; m0 = performance.now(); }
   drawLiveBg();
+  if (profOn) m1 = performance.now();
   drawLiveGL();
+  if (profOn) m2 = performance.now();
   fxSlide();                // the settings card moves here, so the glass drawn next is under it in the same frame
   drawGlass();
+  if (profOn) m3 = performance.now();
   const t = now(), T = total();
   if (!audio && !followOn && playing && t >= T){ setBase(T); setPlaying(false); }
   render(false);
@@ -82,6 +99,10 @@ function tick(){
   }
   $('time').textContent = fmt(t) + ' / ' + fmt(T);
   $('timeL').textContent = fmt(t); $('timeR').textContent = '-' + fmt(Math.max(0, T - t));      // AM 布局: gone by, and still to come, under the two ends of the bar
+  if (profOn){
+    const m4 = performance.now();
+    profLast = { total: m4 - m0, bg: m1 - m0, glass: m3 - m2, dom: m4 - m3, build: prof.build, anchor: prof.anchor, draw: prof.draw, layout: prof.layout, bake: prof.bake, bloom: prof.bloom };
+  }
   requestAnimationFrame(tick);
 }
 

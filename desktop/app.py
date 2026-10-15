@@ -106,6 +106,7 @@ def webview2_version():
 # ---------------------------------------------------------------- window without a title bar
 WM_NCCALCSIZE, WM_NCHITTEST, GWLP_WNDPROC = 0x0083, 0x0084, -4
 WM_WINDOWPOSCHANGING, WM_WINDOWPOSCHANGED, WM_ENTERSIZEMOVE, WM_EXITSIZEMOVE = 0x0046, 0x0047, 0x0231, 0x0232
+WM_SIZE = 0x0005
 HTTOP, HTTOPLEFT, HTTOPRIGHT = 12, 13, 14
 LRESULT = ctypes.c_ssize_t
 WNDPROC = ctypes.WINFUNCTYPE(LRESULT, ctypes.c_void_p, ctypes.c_uint, ctypes.c_size_t, ctypes.c_ssize_t)
@@ -151,7 +152,63 @@ def _frame(hwnd):
         return user32.GetSystemMetrics(33) + user32.GetSystemMetrics(92)
 
 
-def remove_title_bar(hwnd, full=FULL):
+class ResizeThrottle:
+    """A window dragged by its edge is sent a new size at every pixel the pointer passes over, and a mouse that reports
+    at 1000 Hz or more sends them faster than the page can take them: each one made WebView2 resize and the page lay
+    itself out again, and the page stood still for as long as the button was held (measured: 17 frames a second and
+    a second without one, against 120 and 50 ms with this). So while the edge is held the WebView2 control is sized
+    by hand, at most once in EVERY seconds, and once more when the sizes stop (a timer) and when the edge is let go.
+    Outside such a drag (maximise, restore, a size the program sets) it is sized at once, as before.
+
+    The control is no longer docked: this class is what keeps it the size of the form's client area."""
+    EVERY = 0.016
+
+    def __init__(self, form):
+        from System.Windows.Forms import DockStyle, Timer
+        self.form, self.wv = form, form.webview
+        self.hwnd = int(form.Handle.ToInt64())
+        self.loop, self.at, self.pending = False, 0.0, False
+        self.wv.Dock = getattr(DockStyle, "None")
+        self.timer = Timer()
+        self.timer.Interval = 20
+        self.timer.Tick += self._tick
+        self.apply()
+
+    def apply(self):
+        from System.Drawing import Rectangle
+        # the window's own client rectangle: the form's ClientSize is only brought up to date after the message, and
+        # for a size set from another thread (the program's own resize) it was still the old one
+        r = RECT()
+        user32.GetClientRect(ctypes.c_void_p(self.hwnd), ctypes.byref(r))
+        w, h = r.right - r.left, r.bottom - r.top
+        wv = self.wv
+        if w > 0 and h > 0 and (wv.Left != 0 or wv.Top != 0 or wv.Width != w or wv.Height != h):
+            wv.Bounds = Rectangle(0, 0, w, h)
+        self.at = time.perf_counter()
+        self.pending = False
+
+    def _tick(self, *_):
+        self.timer.Stop()
+        if self.pending:
+            self.apply()
+
+    def size(self):                                  # the form has a new size (WM_SIZE)
+        if not self.loop or time.perf_counter() - self.at >= self.EVERY:
+            self.apply()
+        else:
+            self.pending = True
+            if not self.timer.Enabled:
+                self.timer.Start()                   # nothing more arrives: this puts the last size on
+
+    def enter(self):
+        self.loop = True
+
+    def leave(self):
+        self.loop = False
+        self.apply()
+
+
+def remove_title_bar(hwnd, full=FULL, throttle=None):
     """Keep the normal window (resize borders, shadow, snapping, animations) but give the title bar's space to
     the page: the client area starts at the very top. Left, right and bottom borders stay Windows' own; the top
     edge has none any more, so the top few pixels are answered as "resize" by hand.
@@ -164,6 +221,21 @@ def remove_title_bar(hwnd, full=FULL):
     st = {"size": None, "moving": False}
 
     def proc(h, msg, wp, lp):
+        if throttle is not None:                     # (also in full screen: the control is no longer docked)
+            if msg == WM_SIZE:
+                res = user32.CallWindowProcW(old, h, msg, wp, lp)
+                try:
+                    throttle.size()
+                except Exception as ex:
+                    print("resize:", ex)
+                return res
+            if msg == WM_ENTERSIZEMOVE:
+                throttle.enter()
+            elif msg == WM_EXITSIZEMOVE:
+                try:
+                    throttle.leave()
+                except Exception as ex:
+                    print("resize:", ex)
         if full["on"]:
             return user32.CallWindowProcW(old, h, msg, wp, lp)
         if msg == WM_ENTERSIZEMOVE or msg == WM_EXITSIZEMOVE:
@@ -215,7 +287,12 @@ def dress_window(win, full=FULL):
             hwnd = int(form.Handle.ToInt64())
             dark = ctypes.c_int(1)               # dark window border, to go with the page
             ctypes.windll.dwmapi.DwmSetWindowAttribute(ctypes.c_void_p(hwnd), 20, ctypes.byref(dark), 4)
-            remove_title_bar(hwnd, full)
+            throttle = None
+            try:
+                throttle = ResizeThrottle(form)
+            except Exception as ex:                  # (the control stays docked, as it was)
+                print("resize throttle off:", ex)
+            remove_title_bar(hwnd, full, throttle)
         form.Invoke(Action(dress))
     except Exception as e:
         print("window icon / title bar:", e)
@@ -1052,6 +1129,23 @@ def run_window(url):
         except Exception:
             pass
 
+    rem = {"at": 0.0, "pending": False}
+
+    def remember_soon(*_):
+        # "resized" and "moved" arrive at every pixel of a drag, hundreds a second, and each remember() asks the window's
+        # own thread for four values: that stood in the way of the drag itself. Once it has rested for a moment is enough.
+        rem["at"] = time.time()
+        if rem["pending"]:
+            return
+        rem["pending"] = True
+
+        def later():
+            while time.time() - rem["at"] < 0.4:
+                time.sleep(0.1)
+            rem["pending"] = False
+            remember()
+        threading.Thread(target=later, daemon=True).start()
+
     def on_closing():
         remember()
         if last.get("width"):
@@ -1068,8 +1162,8 @@ def run_window(url):
 
     win.events.shown += on_shown
     win.events.loaded += on_loaded
-    win.events.resized += remember
-    win.events.moved += remember
+    win.events.resized += remember_soon
+    win.events.moved += remember_soon
     win.events.closing += on_closing
     win.events.closed += on_closed
     webview.start(gui="edgechromium", private_mode=False, storage_path=os.path.join(DATA, "webview"))

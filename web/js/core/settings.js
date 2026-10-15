@@ -30,7 +30,34 @@ export {
   setPlaying,
   togglePlay,
   total,
+  dragSize,
+  prof,
+  windowResizing,
 };
+
+/* Where the time of a frame goes, for the performance panel (fx.showFps; main.js): the parts add into this while it is on
+   and the main loop reads and clears it each frame. ms. layout: lines laid out anew; bake: text sprites drawn;
+   build: the lyric canvas, type and timeline made anew (a window size or type size change); anchor / draw: the
+   lyrics' place worked out and drawn (layout and bake happen inside them); bloom: the GPU bloom pass. */
+const prof = { on: false, build: 0, anchor: 0, draw: 0, layout: 0, bake: 0, bloom: 0 };
+
+/* The window is being resized: its size changed within the last RESIZE_SETTLE ms. Dragging an edge sends a new size at
+   every pixel, and everything sized to the window was built anew for each of them (the lyric canvas with its type, the
+   text sprites baked for that type: 50 ms a frame with a whole song). What is built for a size is kept while the type size
+   stays the same, and while the edge is being dragged the type size itself moves in coarse steps (dragSize), so that
+   most frames only lay the lines out again; at rest it is the exact size again. */
+const RESIZE_SETTLE = 160, DRAG_STEP = Math.log(1.08);
+let rzW = -1, rzH = -1, rzAt = -1e9;
+function windowResizing(){
+  const w = innerWidth, h = innerHeight, ms = performance.now();
+  if (w !== rzW || h !== rzH){ if (rzW >= 0) rzAt = ms; rzW = w; rzH = h; }
+  return ms - rzAt < RESIZE_SETTLE;
+}
+/* a type size (px) as it is used while the window is dragged: on a grid 8 % apart, which the eye hardly sees (4 % at
+   most), so a run of sizes shares the sprites baked for the first */
+function dragSize(v){
+  return v > 1 && windowResizing() ? Math.round(Math.exp(Math.round(Math.log(v) / DRAG_STEP) * DRAG_STEP)) : v;
+}
 
 /* Effect settings (fx), exit presets, karaoke timing, glow */
 /* effect settings, shared by live playback and video export */

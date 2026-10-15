@@ -1,8 +1,8 @@
 import { late } from '../core/late.js';
 import { $, mode, playing, song } from '../core/lyrics.js';
-import { COVER_GLIDE, coverGlideNow, fx, hexRGB, lt, now } from '../core/settings.js';
+import { COVER_GLIDE, coverGlideNow, dragSize, fx, hexRGB, lt, now, prof, windowResizing } from '../core/settings.js';
 import { oneLine } from '../render/view-dom.js';
-import { buildTimeline, canvasMeasurer } from '../render/text-canvas.js';
+import { canvasMeasurer, lazyTimeline } from '../render/text-canvas.js';
 import { createLookMelt } from './look-melt.js';
 
 export {
@@ -523,7 +523,7 @@ function drawFlowBg(ctx, W, H, t){
    while it is paused, but does not go with the song time when that jumps. Dragging the progress bar used to send the
    background racing along with it. The pulse still goes by the song time (it is the bass at that moment). The export
    draws by the song time alone (drawFlowBg), so a video is the same every time. */
-let bgLastT = -1, bgLastDraw = 0, bgDirty = true, liveGL, bgClock = null;
+let bgLastT = -1, bgLastDraw = 0, bgDirty = true, liveGL, bgClock = null, bgSize = null, bgWasResizing = false;
 function drawLiveBg(){
   const c = $('bgFlow'), on = fx.bg.mode === 'flow';
   c.classList.toggle('on', on);
@@ -531,6 +531,9 @@ function drawLiveBg(){
   const ms = performance.now(), t = now();
   const cv = late.coverVideo;
   if (cv && !cv.paused && coverLiveOn()) bgDirty = true;      // a moving cover: the background follows it, also while the song is paused
+  const rz = windowResizing();
+  if (bgWasResizing && !rz) bgDirty = true;                    // the edge has come to rest: once more, at the size it came to
+  bgWasResizing = rz;
   if (ms - bgLastDraw < ((bassEnv || followBassOn()) && fx.bg.pulse > 0 ? 15 : 33) || (t === bgLastT && !bgDirty)) return;   // 30 fps, 60 when pulsing; nothing while paused
   if (bgClock === null) bgClock = t;
   if (playing) bgClock += Math.min(0.1, Math.max(0, (ms - bgLastDraw) / 1000));      // (a long gap: the page was hidden)
@@ -538,7 +541,10 @@ function drawLiveBg(){
   if (liveGL === undefined){ try { liveGL = makeFlowGL(c); if (liveGL) liveGL.fade = true; } catch(e){ liveGL = null; } }
   if (liveGL){
     const k = Math.min(devicePixelRatio || 1, 2560 / Math.max(1, innerWidth));
-    liveGL.render(Math.round(innerWidth * k), Math.round(innerHeight * k), t, bgClock);
+    // an edge being dragged: the picture keeps the size it had (CSS stretches it); resizing the buffer at every pixel
+    // is what made the background stutter
+    const size = rz && bgSize ? bgSize : (bgSize = [Math.round(innerWidth * k), Math.round(innerHeight * k)]);
+    liveGL.render(size[0], size[1], t, bgClock);
     if (liveGL.animating) bgDirty = true;                      // keep drawing while the look changes, even when paused
     return;
   }
@@ -591,8 +597,10 @@ function drawLiveGL(){
   const dpr = Math.min(devicePixelRatio || 1, 2), r = late.liveRect();
   const CW = Math.round(innerWidth * dpr), CH = Math.round(innerHeight * dpr);
   const W = Math.max(2, Math.round(r.width * dpr)), H = Math.max(2, Math.round(r.height * dpr));
-  const key = [CW, CH, W, H, mode, oneLine, liveGLVer, fx.layout, fx.cover].join('|');
+  const rest = [mode, oneLine, liveGLVer, fx.layout, fx.cover].join('|');
+  const key = [CW, CH, W, H, rest].join('|');
   if (!liveGLx || liveGLKey !== key || liveGLx.song !== song){
+    const pb = prof.on ? performance.now() : 0;
     const tl = Object.assign(document.createElement('canvas'), { width: CW, height: CH });
     const ctx = tl.getContext('2d');
     // same type size as the web view, so switching renderers does not jump
@@ -600,13 +608,22 @@ function drawLiveGL(){
     $('stage').appendChild(probeLine);
     const cssFs = parseFloat(getComputedStyle(probeLine).fontSize) || 60; probeLine.remove();
     // the page's type size, but no larger than the export's rule allows for the height (a wide, low window would otherwise
-    // show two or three lines and look different from the exported video)
-    const M = canvasMeasurer(ctx, W, H, Math.min(cssFs * dpr, H * 0.09));
-    liveGLx = { tl, ctx, M, segs: buildTimeline(M), song, probeM: Object.assign(Object.create(M), { sprites: { draw(){}, drawLit(){}, drawLitGroup(){} }, _probe: true }) };
+    // show two or three lines and look different from the exported video). While an edge is dragged, in coarse steps (dragSize)
+    const fs0 = dragSize(Math.min(cssFs * dpr, H * 0.09));
+    // a new size, the same type (and song, layout ...): the measurer stays, with the text sprites baked for it and the
+    // widths measured; only the canvas it draws on is new. This is most of the frames of a window being dragged. (The
+    // scrolling column only: the one-line layout wraps by the width the measurer was made for.)
+    const keep = liveGLx && liveGLx.rest === rest && liveGLx.song === song && fx.layout === 'scroll' && liveGLx.M.fs === Math.round(fs0 * fx.font.main.s) ? liveGLx.M : null;
+    const M = keep || canvasMeasurer(ctx, W, H, fs0);
+    if (keep) keep.ctx = ctx;
+    liveGLx = { tl, ctx, M, segs: lazyTimeline(M), song, rest, probeM: Object.assign(Object.create(M), { sprites: { draw(){}, drawLit(){}, drawLitGroup(){} }, _probe: true }) };
     liveGLKey = key; liveGLLast = '';
+    if (pb) prof.build += performance.now() - pb;
   }
   const X = liveGLx, t = lt(now());
+  const pa = prof.on ? performance.now() : 0;
   const an = late.lyricAnchor(W, H, X.M), here = { x: r.left + an.x / dpr, y: r.top + an.y / dpr };
+  if (pa) prof.anchor += performance.now() - pa;
   // switched: drawn where they were (from) = their new place + liveK * u, which gives liveK. Switched straight back
   // before anything moved, u is 0 again and they are simply in their place
   if (turned) liveK = from && Math.abs(cg.u) > 0.001 ? { x: (from.x - here.x) / cg.u, y: (from.y - here.y) / cg.u } : { x: 0, y: 0 };
@@ -615,17 +632,23 @@ function drawLiveGL(){
   liveAt = here; liveU = cg.u;
   const gx = liveK.x * cg.u, gy = liveK.y * cg.u;         // how far from their place the lyrics are drawn (window px)
   const probe = { fillRect(){}, clearRect(){}, beginPath(){}, rect(){}, clip(){}, save(){}, restore(){}, translate(){}, scale(){}, drawImage(){}, setTransform(){}, getTransform(){ return new DOMMatrix(); }, set globalAlpha(v){}, set globalCompositeOperation(v){}, set fillStyle(v){}, set filter(v){} };
+  const pp = prof.on ? performance.now() : 0;
   const st = late.drawFrame(probe, W, H, X.probeM, X.segs, t, true, true, true);
+  if (pp) prof.draw += performance.now() - pp;
   const sig = st && !cg.moving ? st + '|' + key : null;
   if (sig && sig === liveGLLast) return;                   // nothing moves: keep the last picture
   liveGLLast = sig || '';
   const c = X.ctx;
   c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, CW, CH);
   c.setTransform(1, 0, 0, 1, Math.round((r.left + gx) * dpr), Math.round((r.top + gy) * dpr));
+  const pd = prof.on ? performance.now() : 0;
   late.drawFrame(c, W, H, X.M, X.segs, t, true, true, true);
+  if (pd) prof.draw += performance.now() - pd;
   const o = late.bloomOpts(X.M);
   if (!fx.glow.on || !late.useWebGL()) o.k = 0;       // canvas view without WebGL glow: plain text (glow comes from the sprites)
+  const pl = prof.on ? performance.now() : 0;
   liveBloom.render(X.tl, o);
+  if (pl) prof.bloom += performance.now() - pl;
 }
 
 function setCoverBmp(v){ return coverBmp = v; }   // other modules cannot assign to an imported binding

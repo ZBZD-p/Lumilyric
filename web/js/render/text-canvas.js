@@ -1,13 +1,14 @@
 import { late } from '../core/late.js';
 import { CJK } from '../core/core.js';
 import { song } from '../core/lyrics.js';
-import { exitSpec, fx, glowGain, glowLayers, karaokeTimes, lyricFont } from '../core/settings.js';
+import { exitSpec, fx, glowGain, glowLayers, karaokeTimes, lyricFont, prof } from '../core/settings.js';
 import { chunkText, oneLine, segmentsFor, tokens } from './view-dom.js';
 
 export {
   PRESETS,
   SWEEP,
   buildTimeline,
+  lazyTimeline,
   canvasMeasurer,
   clamp01,
   cubicBezier,
@@ -169,6 +170,13 @@ function canvasMeasurer(ctx, W, H, fsOverride, derived){
   return Object.assign(M, { fs, sfs, setFont, w, avail: () => W * 0.86, blurOK: 'filter' in ctx });
 }
 
+/* the timeline of M, built when something first reads it: only the one-line layout does (the scrolling column never
+   reads it, and it took 10 ms and more to build for a whole song) */
+function lazyTimeline(M){
+  let segs = null;
+  const get = () => segs || (segs = buildTimeline(M));
+  return new Proxy([], { get: (_, k) => get()[k], has: (_, k) => k in get() });
+}
 function buildTimeline(M){
   const cache = new Map(), segs = [];
   const first = song.lines[0];
@@ -225,6 +233,7 @@ function spriteCache(M){
     const key = (isSub ? 's' : 'p') + li + '/' + layer + '|' + text;
     let sp = map.get(key);
     if (sp){ map.delete(key); map.set(key, sp); return sp; }
+    const p0 = prof.on ? performance.now() : 0;
     const tw = M.w(text, isSub);
     const pd = layer ? Math.ceil(bl * 3) + 4 : pad;
     // wide halos are rendered small and scaled up when drawn: a blur hides the lower resolution
@@ -254,6 +263,7 @@ function spriteCache(M){
       const [k0, s0] = map.entries().next().value;
       map.delete(k0); bytes -= s0.w * s0.h * 4;
     }
+    if (p0) prof.bake += performance.now() - p0;
     return sp;
   }
   // draw text centred-left at (x, y) with an arbitrary blur, cross-fading two baked levels

@@ -1,8 +1,8 @@
 import { late } from '../core/late.js';
 import { $, mode, song } from '../core/lyrics.js';
-import { exitTotal, fx, lt, lyricDelay, now } from '../core/settings.js';
+import { dragSize, exitTotal, fx, lt, lyricDelay, now } from '../core/settings.js';
 import { oneLine } from './view-dom.js';
-import { buildTimeline, canvasMeasurer, clamp01, drawSeg, easeOut, setDrawOnColour, setSpriteAlphaMul } from './text-canvas.js';
+import { canvasMeasurer, clamp01, lazyTimeline, drawSeg, easeOut, setDrawOnColour, setSpriteAlphaMul } from './text-canvas.js';
 import { coverHi, coverURL, drawFlowBg, exportDith, exportProf, flowPalette, setLiveGLLast } from '../background/background.js';
 import { coverVideo } from '../background/cover-extract.js';
 import { bloomOpts, exportBloomGL, useWebGL } from './bloom.js';
@@ -215,15 +215,20 @@ function regionM(M, rw, rh, portrait, anchor){
     // portrait: the page's CSS size (5.4 % of the width, at most 72 px) is small for a tall window; the export's size for
     // that frame (7.5 % of the width) is what the exported video has, so the page shows the same
     const ms = fx.font.main.s;      // the 字号 setting scales these size rules as it scales the base size
-    const fs = useScroll() ? (portrait ? Math.max(M.fs, Math.round(Math.min(rw * 0.075, rh * 0.075) * ms)) : M.fs) : Math.min(M.fs, Math.round(Math.min(rw * 0.075, rh * 0.09) * ms));
-    const Mr = canvasMeasurer(M.ctx, rw, rh, fs, true);
+    // (while the window is dragged the sizes that follow the area move in coarse steps: dragSize, settings.js)
+    const fs = useScroll() ? (portrait ? Math.max(M.fs, Math.round(dragSize(Math.min(rw * 0.075, rh * 0.075)) * ms)) : M.fs) : Math.min(M.fs, Math.round(dragSize(Math.min(rw * 0.075, rh * 0.09)) * ms));
+    // the scrolling column wraps itself to whatever width it is given, so a new area of the same type size keeps the
+    // measurer (the widths measured, the sprites baked for it) and only gets the new size: drawn that way at every pixel
+    // of a window being dragged, sprites were baked anew for each
+    const old = M._reg && M._reg.Mr, same = old && useScroll() && old.fs === Math.round(fs) && M._reg.fx === fx.layout + !!portrait + ms + '|' + fx.font.sub.s;
+    const Mr = same ? old : canvasMeasurer(M.ctx, rw, rh, fs, true);
     if (M._probe){ Mr.sprites = M.sprites; Mr._probe = true; }
     Mr._x0 = portrait ? 0.07 : 0.04;        // left margin of the scrolling column: lines up with the cover
     Mr._anc = anchor;                       // AM 布局: how far down the line being sung stands (layout-scroll.js)
-    M._reg = { key, Mr };
+    M._reg = { key, Mr, fx: fx.layout + !!portrait + ms + '|' + fx.font.sub.s };
   }
   const Mr = M._reg.Mr, tkey = [song.lines.length, mode, oneLine].join('|');
-  if (Mr._segSong !== song || Mr._segKey !== tkey){ Mr._segs = buildTimeline(Mr); Mr._segSong = song; Mr._segKey = tkey; }
+  if (Mr._segSong !== song || Mr._segKey !== tkey){ Mr._segs = lazyTimeline(Mr); Mr._segSong = song; Mr._segKey = tkey; }
   return Mr;
 }
 /* where the lyrics are in a frame of W x H drawn with M: the point the line being sung is set out from (the middle of

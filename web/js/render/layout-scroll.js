@@ -1,6 +1,6 @@
 import { late } from '../core/late.js';
 import { assignMode, lineTokenTimes, mode, song } from '../core/lyrics.js';
-import { coverGlideNow, fx, karaokeTimes } from '../core/settings.js';
+import { coverGlideNow, fx, karaokeTimes, prof } from '../core/settings.js';
 import { glideAt, glideKick } from '../core/glide.js';
 import { greedy, joinU, lineTexts, tokens, units } from './view-dom.js';
 import { HOLD, SWEEP, canvasMeasurer, clamp01, cubicBezier, drawOnColour, holdGlow, liftWord, rowOffs, setSpriteAlphaMul, spriteCache, sweepActive, sweepPos } from './text-canvas.js';
@@ -56,12 +56,15 @@ function scrollLayout(M2, W, H){
   if (!byKey) mem.set(song, byKey = new Map());
   const hit = byKey.get(key);
   if (hit) return hit;
+  const p0 = prof.on ? performance.now() : 0;
   // a fixed-width column filled left to right (like Apple Music): every line breaks at the same right edge,
   // instead of short lines staying on one row and longer ones being split into two even halves
   const maxW = Math.min(W * (1 - 2 * (M2._x0 || 0.1)), M2.fs * 17), MW = Object.assign(Object.create(M2), { avail: () => maxW });
-  // text broken into rows no wider than width, as measured by Mx
-  const wrapper = (Mx, width) => {
+  // text broken into rows no wider than width, as measured by Mx. rec: gets every width that was measured, each of which
+  // was compared with width (fits or not): see span
+  const wrapper = (Mx, width, rec) => {
     const MX = Object.assign(Object.create(Mx), { avail: () => width });
+    if (rec) MX.w = (t, sub) => { const v = Mx.w(t, sub); rec.push(v); return v; };
     return (text, isSub) => {
       if (!text) return [];
       if (MX.w(text, isSub) <= width) return [text];
@@ -75,52 +78,77 @@ function scrollLayout(M2, W, H){
       return g.map(joinU);
     };
   };
-  const wrap = wrapper(M2, maxW);
   const fs = M2.fs, sfs = M2.sfs, lineH = fs * 1.18, subH = sfs * 1.45, gap = fs * 0.62;
-  // background vocals (L.bg): smaller type, a narrower column, translation in the usual translation size
-  const BM = bgMeasurer(M2, W, H), bgW = maxW * BG_W, wrapBg = wrapper(BM, bgW), wrapBgSub = wrapper(M2, bgW);
-  const bgLayout = b => {
-    const { pri, sub } = lineTexts(b);
-    if (!pri) return null;
+  /* How a line breaks depends on the column's width only through a few comparisons "is this row wider than the
+     column?". Of the widths measured (rec), those that fitted give the narrowest column the same breaks come out for
+     (lo), those that did not the widest (hi, exclusive). A line's layout is kept with that span and used again for
+     any width inside it: the window being dragged moves the column's width by a pixel at a time, and the layout of
+     all the lines was worked out anew for each (the result is the same, to the pixel). The rows are laid out for a
+     measurer (M2, one type size), so the cache lives on it, and for the language shown. */
+  const span = (rec, width) => {
+    let lo = 0, hi = Infinity;
+    for (const v of rec){ if (v <= width) lo = Math.max(lo, v); else hi = Math.min(hi, v); }
+    return [lo, hi];
+  };
+  const lcSong = M2._lc || (M2._lc = new WeakMap());
+  let lcModes = lcSong.get(song);
+  if (!lcModes) lcSong.set(song, lcModes = {});
+  const lcLines = lcModes[mode] || (lcModes[mode] = []);
+  const useCache = !late.noLineCache;
+  const rowsOf = (Mx, texts) => {                    // the row's words with their places along it
     let k = 0;
-    const rows = wrapBg(pri, false).map(row => {
+    const rows = texts.map(row => {
       const toks = []; let x = 0;
       for (const tk of tokens(row)){
-        const wd = BM.w(tk.trim() ? tk : ' ', false);
+        const wd = Mx.w(tk.trim() ? tk : ' ', false);
         if (tk.trim()) toks.push({ s: tk, x, w: wd, k: k++ });
         x += wd;
       }
       return { toks, width: x };
     });
-    const subRows = wrapBgSub(sub, true), subWs = subRows.map(r => M2.w(r, true));
-    colW = Math.max(colW, ...rows.map(r => r.width), ...subWs);
-    const times = lineTokenTimes(b, pri), bl = BM.fs * 1.18, padT = fs * 0.15;
+    return { rows, k };
+  };
+  const mainLayout = (L, i) => {
+    const { pri, sub } = lineTexts(L);
+    let e = lcLines[i];
+    if (useCache && e && e.pri === pri && e.sub === sub && maxW >= e.lo && maxW < e.hi) return e;
+    const rec = [], wr = wrapper(M2, maxW, rec);
+    const { rows, k } = rowsOf(MW, wr(pri, false));
+    const subRows = wr(sub, true), subWs = subRows.map(r => MW.w(r, true));
+    const [lo, hi] = span(rec, maxW);
+    e = { pri, sub, lo, hi, rows, k, subRows, subWs, colW: Math.max(0, ...rows.map(r => r.width), ...subWs),
+      h: rows.length * lineH + (subRows.length ? sfs * 0.45 + subRows.length * subH : 0), bg: null };
+    return lcLines[i] = e;
+  };
+  // background vocals (L.bg): smaller type, a narrower column, translation in the usual translation size
+  const BM = bgMeasurer(M2, W, H), bgW = maxW * BG_W;
+  const bgLayout = (b, e) => {
+    const { pri, sub } = lineTexts(b);
+    if (!pri) return null;
+    let c = e.bg;
+    if (!(useCache && c && c.pri === pri && c.sub === sub && bgW >= c.lo && bgW < c.hi)){
+      const recP = [], recS = [];
+      const { rows, k } = rowsOf(BM, wrapper(BM, bgW, recP)(pri, false));
+      const subRows = wrapper(M2, bgW, recS)(sub, true), subWs = subRows.map(r => M2.w(r, true));
+      const [lo, hi] = span(recP.concat(recS), bgW), bl = BM.fs * 1.18, padT = fs * 0.15;
+      c = e.bg = { pri, sub, lo, hi, rows, k, subRows, subWs, colW: Math.max(0, ...rows.map(r => r.width), ...subWs), bl, padT,
+        h: padT + rows.length * bl + (subRows.length ? sfs * 0.45 + subRows.length * subH : 0) };
+    }
+    const times = lineTokenTimes(b, pri), k = c.k;
     const seg = { t: b.t, end: b.end, times: times && times.length === k ? times : null, we: b.wt && b.wt.length === k ? b.wt[k - 1].e : undefined };
-    return { rows, subRows, subWs, n: k, kar: k && seg.times ? karaokeTimes(seg, k) : null, lineH: bl, padT, above: !!b.above,
-      h: padT + rows.length * bl + (subRows.length ? sfs * 0.45 + subRows.length * subH : 0) };
+    return { rows: c.rows, subRows: c.subRows, subWs: c.subWs, n: k, kar: k && seg.times ? karaokeTimes(seg, k) : null, lineH: c.bl, padT: c.padT,
+      above: !!b.above, h: c.h, colW: c.colW };
   };
   const items = []; let y = 0, colW = 0;
   items.bgs = [];                                  // the lines that have background vocals
   song.lines.forEach((L, i) => {
-    const { pri, sub } = lineTexts(L);
-    let k = 0;
-    const rows = wrap(pri, false).map(row => {
-      const toks = []; let x = 0;
-      for (const tk of tokens(row)){
-        const wd = MW.w(tk.trim() ? tk : ' ', false);
-        if (tk.trim()) toks.push({ s: tk, x, w: wd, k: k++ });
-        x += wd;
-      }
-      return { toks, width: x };
-    });
-    const subRows = wrap(sub, true), subWs = subRows.map(r => MW.w(r, true));
-    colW = Math.max(colW, ...rows.map(r => r.width), ...subWs);
-    const h = rows.length * lineH + (subRows.length ? sfs * 0.45 + subRows.length * subH : 0);
-    const times = lineTokenTimes(L, pri);
+    const e = mainLayout(L, i), { rows, subRows, subWs, h, k } = e;
+    colW = Math.max(colW, e.colW);
+    const times = lineTokenTimes(L, e.pri);
     const seg = { t: L.t, end: L.end, times: times && times.length === k ? times : null, we: L.wt && L.wt.length === k ? L.wt[k - 1].e : undefined };
     // word-by-word light only with real word times; otherwise the whole line lights up at once, like Apple Music
-    const bg = L.bg ? bgLayout(L.bg) : null;
-    if (bg) items.bgs.push(i);
+    const bg = L.bg ? bgLayout(L.bg, e) : null;
+    if (bg){ items.bgs.push(i); colW = Math.max(colW, bg.colW); }
     items.push({ i, y, h, rows, subRows, subWs, n: k, kar: k && seg.times ? karaokeTimes(seg, k) : null, t: L.t, end: L.end, duet: !!side[i], bg });
     y += h + gap;
   });
@@ -129,6 +157,7 @@ function scrollLayout(M2, W, H){
   const res = { song, key, items, lineH, subH, colW, maxW };
   if (byKey.size >= 4) byKey.delete(byKey.keys().next().value);
   byKey.set(key, res);
+  if (p0) prof.layout += performance.now() - p0;
   return res;
 }
 /* which line is current at t, and which one the column is already moving to (it starts a moment early) */

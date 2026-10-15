@@ -8,7 +8,7 @@ import { createSongFlow } from '../render/song-transition.js';
 import { songStage, useScroll } from '../render/layout-scroll.js';
 import { exporting, setDelay } from '../export/export.js';
 import { applyFx, coverImgURL, setCoverAskPick, showCoverAsk } from '../ui/ui-effects.js';
-import { api, helper } from './helper.js';
+import { api, helper, scrubbing } from './helper.js';
 import { amllLookup } from './library.js';
 
 export {
@@ -67,8 +67,11 @@ function followSeek(t){
   followCalAt = Date.now();                               // ignore snapshots computed before this move
   render(true);
   clearTimeout(followSeekT);
-  followSeekT = setTimeout(() => {
+  // sent once the bar is let go (scrubbing is on from the first move until the change event), and 140 ms after the
+  // last move: a drag that sweeps across the bar asks the player once. For QQ Music each ask starts a program.
+  const send = () => {
     followSeekT = 0;
+    if (scrubbing){ followSeekT = setTimeout(send, 60); return; }
     if (!followOn || !followInfo) return;
     followCalAt = Date.now();
     if (canSeek)
@@ -78,7 +81,8 @@ function followSeek(t){
     else
       api('/api/nowplaying/calibrate', JSON.stringify({ app: followInfo.app, trackId: F.trackId, position: t }), { 'Content-Type': 'application/json' })
         .then(() => { followCalAt = Date.now(); }).catch(() => {});
-  }, 140);
+  };
+  followSeekT = setTimeout(send, 140);
 }
 
 /* ---- remote control: play, pause, previous, next on the player being followed (Windows' media session; the same

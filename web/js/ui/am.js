@@ -158,12 +158,22 @@ $('amStar').addEventListener('click', () => $('amStar').setAttribute('aria-press
 document.querySelectorAll('.amph').forEach(b => b.onclick = () => { $('status').textContent = `「${b.getAttribute('aria-label')}」还没有功能，先占个位置`; });
 
 /* the volume of the loaded audio file, and of the QQ web-player window (QQ 网页跟随, desktop only: desktop/app.py
-   puts a gain of ours in front of that page's sound). Another player followed keeps its own volume. */
+   puts a gain of ours in front of that page's sound), and of the QQ Music program when that is the player followed
+   (told once the slider is let go: its command line starts a program for each). Another player followed keeps its
+   own volume. */
 let vol = 1, before = 1;
 try { const v = parseFloat(localStorage.getItem('lrc-am-vol')); if (isFinite(v)) vol = Math.max(0, Math.min(1, v)); } catch (e){}
 function qqVol(){
   const api = window.pywebview && window.pywebview.api;
   if (api && api.qq_volume) Promise.resolve(api.qq_volume(vol)).catch(() => {});
+}
+function qqMusicVol(){
+  if (!qFollow() || !/qqmusic/i.test(qApp())) return;      // the QQ Music program, not the web player (qqweb.web)
+  fetch('/api/nowplaying/control', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'volume', position: Math.round(vol * 100), app: qApp() }) })
+    .then(r => r.json())
+    .then(r => { if (!r.ok) $('status').textContent = '没有调成 QQ音乐 的音量' + (r.reason ? '：' + r.reason : ''); })
+    .catch(() => {});
 }
 function showVol(){
   const el = $('amVol');
@@ -174,6 +184,7 @@ function showVol(){
 }
 addEventListener('pywebviewready', qqVol);       // the desktop window's api comes a moment after the page
 $('amVol').oninput = e => { vol = e.target.value / 100; try { localStorage.setItem('lrc-am-vol', vol); } catch (err){} showVol(); };
-$('amMute').onclick = () => { if (vol > 0){ before = vol; vol = 0; } else vol = before || 1; showVol(); };
+$('amVol').onchange = qqMusicVol;                  // let go (or a key press): not on every step of the drag
+$('amMute').onclick = () => { if (vol > 0){ before = vol; vol = 0; } else vol = before || 1; showVol(); qqMusicVol(); };
 showVol();
 setInterval(() => { if (audio && audio.volume !== vol) audio.volume = vol; }, 1000);      // an audio file loaded later takes the volume too

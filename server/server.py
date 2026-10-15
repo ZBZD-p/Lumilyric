@@ -18,9 +18,10 @@ API (JSON):
   POST /api/nowplaying/lyrics {trackId}    -> {lrc, source, title, verbatim, score} or {lrc: null, reason}
   POST /api/nowplaying/cover/save?track=&side=  raw image body: keep the sharp cover chosen for this song
   POST /api/nowplaying/calibrate {app, trackId, position}  -> {ok}  (players that give no position: Kugou)
-  POST /api/nowplaying/control {action: play|pause|next|prev|seek|playAt|removeAt|openAt|mode, position?, app?}
+  POST /api/nowplaying/control {action: play|pause|next|prev|seek|volume|playAt|removeAt|openAt|mode, position?, app?}
                               -> {ok, reason?}   (QQ 网页跟随 only: playAt / removeAt / openAt, position = the list
-                              index; mode, position = list | single | random | order)
+                              index; mode, position = list | single | random | order. volume, position = 0-100:
+                              the QQ Music program only, seek of it goes through its command line too, qqcmd.py)
   GET  /api/nowplaying/queue?app=     the play list {ok, mode, items: [{title, artist, album, cover, dur, now, vip}]}
                                       (QQ 网页跟随 only)
 """

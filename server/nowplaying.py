@@ -28,6 +28,7 @@ import push
 import lyrics_match as LM
 import disk_cache as DC
 import qqweb
+import qqcmd
 from track_state import PlayerState
 
 # QQ 网页跟随: the embedded QQ web player (desktop only) is fed in as if it were a player, so lyrics, position,
@@ -158,6 +159,11 @@ def app_info(app):
         if key in low:
             return name, src
     return (app or ""), ""
+
+
+def is_qq_desktop(app):
+    """The QQ Music program itself (not the embedded web player): moved through its command line, see qqcmd.py."""
+    return (app or "") != EXT_APP and "qqmusic" in (app or "").lower()
 
 
 def is_browser(app):
@@ -308,6 +314,8 @@ async def _read_session(s):
         can_seek = bool(pb.controls.is_playback_position_enabled)      # the player accepts "jump to a position"
     except Exception:
         can_seek = False
+    if not can_seek and is_qq_desktop(app) and qqcmd.find_exe():
+        can_seek = True                                    # it does not say so, but its command line does (qqcmd.py)
     return {"app": app, "appName": app_info(app)[0], "title": title, "artist": artist, "album": album,
             "dur": dur, "pos0": tl.position.total_seconds(), "lu": lu_ts, "read_at": now,
             "playing": int(pb.playback_status) == 4,       # 4 PLAYING, 5 PAUSED
@@ -590,10 +598,45 @@ async def _control(s_obj, action, position):
     raise ValueError("unknown action")
 
 
+def _keep_paused(app):
+    """`/seekto` starts a paused player: a seek asked while paused puts it back to pause once it has started."""
+    for _ in range(14):
+        time.sleep(0.15)
+        with _LOCK:
+            st, obj = _PLAYERS.get(app), _OBJS.get(app)
+            on = bool(st and st.raw and st.raw.get("playing"))
+        if on and obj is not None and _LOOP is not None:
+            try:
+                asyncio.run_coroutine_threadsafe(_control(obj, "pause", None), _LOOP).result(3)
+            except Exception:
+                pass
+            return
+
+
+def _qq_command(app, action, position):
+    """seek / volume of the QQ Music program, through its command line."""
+    try:
+        v = float(position)
+    except (TypeError, ValueError):
+        return {"ok": False, "reason": "没有给出数值"}
+    if action == "volume":
+        ok, why = qqcmd.volume(v)
+        return {"ok": ok, "reason": why}
+    with _LOCK:
+        st = _PLAYERS.get(app)
+        was_playing = bool(st and st.raw and st.raw.get("playing"))
+    ok, why = qqcmd.seek(v)
+    if ok and not was_playing:
+        threading.Thread(target=_keep_paused, args=(app,), daemon=True).start()
+    return {"ok": ok, "reason": why}
+
+
 def control(action, position=None, app=""):
-    if action not in ("play", "pause", "next", "prev", "seek", "playAt", "removeAt", "openAt", "mode"):
+    if action not in ("play", "pause", "next", "prev", "seek", "volume", "playAt", "removeAt", "openAt", "mode"):
         return {"ok": False, "reason": "不认识的操作"}
     if MOCK:
+        if action == "volume":
+            return {"ok": False, "reason": "模拟播放器没有音量"}
         _mock_tick()
         n = int(_mock["elapsed"] // MOCK_SONG)
         if action == "play":
@@ -627,6 +670,10 @@ def control(action, position=None, app=""):
                 return {"ok": False, "reason": "时长未知"}
             return qqweb.seek(float(position) / float(dur))
         return qqweb.control(action)
+    if is_qq_desktop(m["app"]) and action in ("seek", "volume"):
+        return _qq_command(m["app"], action, position)
+    if action == "volume":                                  # only QQ Music can be asked for one
+        return {"ok": False, "reason": "这个播放器不支持调音量"}
     try:
         ok = asyncio.run_coroutine_threadsafe(_control(obj, action, position), _LOOP).result(4)
     except Exception as e:

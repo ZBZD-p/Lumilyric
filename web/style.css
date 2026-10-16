@@ -475,7 +475,7 @@ body.am .bottom{position:fixed;left:var(--am-x,0);top:var(--am-y,0);width:var(--
 body.am.idle .bottom{opacity:1}
 body.am .meta{visibility:hidden}
 body.am .bottom .tbar,body.am.ui-glass .bottom .tbar.lg{display:grid;grid-template-columns:1fr auto auto auto 1fr;grid-template-areas:"bar bar bar bar bar" "tl tl . tr tr" "shuf prev play next rep";
-  align-items:center;gap:2px 18px;padding:0;border:0;border-radius:0;background:none}
+  align-items:center;gap:2px calc(18px * var(--am-k,1));padding:0;border:0;border-radius:0;background:none}
 body.am .tbar .bar{grid-area:bar;min-width:0;margin:0}
 body.am .tbar #time{display:none}
 body.am .tbar .amtime{display:block;font-size:11px;margin:0;opacity:.8}
@@ -491,14 +491,14 @@ body.am .tbar .play svg:not(.amico),body.am .tbar .skip svg:not(.amico){display:
 body.am .tbar .amico{display:block;fill:currentColor;stroke:currentColor;stroke-width:1.9;stroke-linejoin:round}
 body.am #play[aria-label="暂停"] .pl,body.am #play:not([aria-label="暂停"]) .pa{display:none}
 body.am .amico .pa{stroke:none}
-body.am .tbar .play,body.am.ui-glass .tbar.lg .play,body.am .tbar .skip{width:64px;height:64px;border-radius:50%;background:rgba(255,255,255,0);color:#fff;opacity:1;
+body.am .tbar .play,body.am.ui-glass .tbar.lg .play,body.am .tbar .skip{width:calc(64px * var(--am-k,1));height:calc(64px * var(--am-k,1));border-radius:50%;background:rgba(255,255,255,0);color:#fff;opacity:1;
   transition:background-color .3s ease,transform .35s cubic-bezier(.3,1.7,.5,1)}
 body.am .tbar .play{grid-area:play}
-body.am .tbar .skip{width:58px;height:58px}
+body.am .tbar .skip{width:calc(58px * var(--am-k,1));height:calc(58px * var(--am-k,1))}
 body.am .tbar .play:hover,body.am.ui-glass .tbar.lg .play:hover,body.am .tbar .skip:hover{background:rgba(255,255,255,.1)}
 body.am .tbar .play:active,body.am.ui-glass .tbar.lg .play:active,body.am .tbar .skip:active{background:rgba(255,255,255,.22);transform:scale(.86);transition-duration:.09s,.09s}
-body.am .tbar .play .amico{width:40px;height:40px}
-body.am .tbar .skip .amico{width:38px;height:38px}
+body.am .tbar .play .amico{width:calc(40px * var(--am-k,1));height:calc(40px * var(--am-k,1))}
+body.am .tbar .skip .amico{width:calc(38px * var(--am-k,1));height:calc(38px * var(--am-k,1))}
 /* the buttons Apple Music has and this player has (mostly) no use for: all there, see js/ui/am.js. In the bar: shuffle
    and repeat at the two ends of the row, favourite and "more" up beside the title (--am-up: how far above the bar) */
 .amonly,.amui{display:none}
@@ -540,8 +540,8 @@ body.am #amShuffle{grid-area:shuf;justify-self:start}
 body.am #amRepeat{grid-area:rep;justify-self:end}
 /* shuffle and repeat as Apple Music draws them: soft, thick, rounded lines, a little dimmer than the other signs. Each
    is a switch: on, it stands on a pale disc and is fully white (.amtog, js/ui/am.js; nothing is switched by it yet) */
-body.am .amtog{width:36px;height:36px;opacity:.62;transition:background-color .25s ease,opacity .25s ease,transform .3s cubic-bezier(.3,1.7,.5,1)}
-body.am .amtog svg{width:23px;height:23px}
+body.am .amtog{width:calc(36px * var(--am-k,1));height:calc(36px * var(--am-k,1));opacity:.62;transition:background-color .25s ease,opacity .25s ease,transform .3s cubic-bezier(.3,1.7,.5,1)}
+body.am .amtog svg{width:calc(23px * var(--am-k,1));height:calc(23px * var(--am-k,1))}
 body.am .amtog svg .ln{stroke-width:2.5}
 body.am .amtog:hover{opacity:.9;background:rgba(255,255,255,.1)}
 body.am .amtog[aria-pressed="true"]{opacity:1;background:rgba(255,255,255,.22)}
@@ -649,6 +649,17 @@ body.am.am-qx #glView{transition:opacity .35s var(--ease)}
 .amui .ampill .amb[aria-pressed="false"]{background:rgba(255,255,255,.2);color:#fff}      /* the lyrics are switched off */
 .amui .ampill .amb[aria-pressed="false"]:hover{background:rgba(255,255,255,.34)}
 .amfabs text{font-family:var(--zh)}
+/* the effects drawer (body.fx-open) lies over the right edge: the volume at the top and the buttons at the bottom
+   right stand beside it instead of under it, moving at the pace of the drawer (the way .xpill does). In a window under
+   760 px the drawer is a sheet from the bottom: the volume stays, the buttons rise to stand on the sheet. */
+.amvol{transition:right .5s var(--ease)}
+.amfabs{transition:right .5s var(--ease),bottom .5s var(--ease)}
+body.fx-open .amvol{right:calc(var(--drawer) + 26px)}
+body.fx-open .amfabs{right:calc(var(--drawer) + 28px)}
+@media (max-width:760px){
+  body.fx-open .amvol{right:14px}
+  body.fx-open .amfabs{right:16px;bottom:calc(var(--sheet) + 14px)}
+}
 /* the progress bar: thinner at rest, thicker under the pointer (and while it is dragged), as in Apple Music. The input is
    20px tall all the time and the track keeps its size: only the painted bar (--bh, its height, a registered length so
    that it can be animated) changes, which is drawn at fractions of a pixel and so grows smoothly. The knob (the

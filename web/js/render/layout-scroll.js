@@ -263,6 +263,10 @@ function drawScrollOne(ctx, W, H, M, t, shiftFn, fade){
   // which line is current; the column starts moving a moment before the next line begins, so the line arrives as it is sung
   const L = SCROLL.lead, { cur, curL } = scrollCur(items, t);
   const offFor = j => scrollOff(items, j, t, anchor, curL);
+  // the melting towards the edges goes by where a row is drawn now (a language change, and a seek's drag: shiftFn.edgeNow),
+  // not by where it would be at rest. By its place at rest, the lines at the edges of a dragged column (the ones that meet
+  // in the middle of the screen, where the old place and the new one join) stayed invisible all the way through
+  const edgeNow = !!(shiftFn && shiftFn.edgeNow);
   let moving = alignMoving, lit = 0;
   ctx.save();
   ctx.beginPath(); ctx.rect(0, 0, W, H); ctx.clip();       // the column ends at the edge of its area (under the cover, above the controls)
@@ -310,7 +314,7 @@ function drawScrollOne(ctx, W, H, M, t, shiftFn, fade){
       const swc = kar && act > 0 ? sweepPos(kar, SWo.offs, SWo.ws, SE, t) : 0;
       if (kar && act > 0 && sweepActive(kar, t)) moving = true;
       for (const row of rows){
-        const ea = Math.max(act, edge(fade ? ry : ry - dyj)) * mul;      // a language change: by where the row is now, so that it melts away as it reaches the edge
+        const ea = Math.max(act, edge(fade || edgeNow ? ry : ry - dyj)) * mul;      // a language change: by where the row is now, so that it melts away as it reaches the edge
         setSpriteAlphaMul(aPri * ea);
         if (aPri * ea <= 0){ ry += lh; continue; }
         const rx = rowX(row.width);
@@ -349,7 +353,7 @@ function drawScrollOne(ctx, W, H, M, t, shiftFn, fade){
       let ry = mt + it.rows.length * S.lineH + S.lineH / 2;
       ry += sfs * 0.45 - S.lineH / 2 + S.subH / 2;
       const subA = 0.24 + 0.36 * act;
-      it.subRows.forEach((r, n) => { setSpriteAlphaMul(aSub * Math.max(act, edge(fade ? ry : ry - dyj))); SP.draw(ctx, r, true, rowX(it.subWs[n]), ry, subA, blur); ry += S.subH; });
+      it.subRows.forEach((r, n) => { setSpriteAlphaMul(aSub * Math.max(act, edge(fade || edgeNow ? ry : ry - dyj))); SP.draw(ctx, r, true, rowX(it.subWs[n]), ry, subA, blur); ry += S.subH; });
     }
     if (bg && act > 0){
       // the rows of the block come apart as it opens (act = how far), and it is as faint as it is closed
@@ -357,7 +361,7 @@ function drawScrollOne(ctx, W, H, M, t, shiftFn, fade){
       words(bg.rows, bg.kar, BM, SPB, BM.fs, bg.lineH * u, yb + u * bg.lineH / 2, u);
       let ry = yb + u * (bg.rows.length * bg.lineH + sfs * 0.45 + S.subH / 2);
       const subA = 0.24 + 0.36 * act;
-      bg.subRows.forEach((r, n) => { setSpriteAlphaMul(aSub * u * Math.max(act, edge(fade ? ry : ry - dyj))); SP.draw(ctx, r, true, rowX(bg.subWs[n]), ry, subA, blur); ry += S.subH * u; });
+      bg.subRows.forEach((r, n) => { setSpriteAlphaMul(aSub * u * Math.max(act, edge(fade || edgeNow ? ry : ry - dyj))); SP.draw(ctx, r, true, rowX(bg.subWs[n]), ry, subA, blur); ry += S.subH * u; });
     }
     setSpriteAlphaMul(1);
     ctx.restore();
@@ -446,9 +450,11 @@ function drawScroll(ctx, W, H, M, t){
   const sk = seekMotion.step(performance.now(), t, geo, matchMedia('(prefers-reduced-motion:reduce)').matches);
   for (const x of sk.outs){                              // earlier places, on their way out (or melting away)
     const sh = j => x.off[j];
+    sh.edgeNow = true;
     drawScrollOne(ctx, W, H, M, x.t, sh, x.melting ? { dy: sh, alpha: Math.max(0, x.alpha), same: () => false, priSame: 0 } : undefined);
   }
-  const L = sk.live, k = L && sk.byRest ? drawScrollOne(ctx, W, H, M, sk.t, j => L[j])
+  const L = sk.live, liveShift = L && sk.byRest ? Object.assign(j => L[j], { edgeNow: true }) : null;
+  const k = liveShift ? drawScrollOne(ctx, W, H, M, sk.t, liveShift)
     : drawScrollOne(ctx, W, H, M, sk.t, null, L ? { dy: j => L[j], alpha: 1, same: () => true, priSame: 1 } : undefined);
   return r.busy || sk.busy ? null : k;
 }

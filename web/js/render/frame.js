@@ -163,21 +163,60 @@ function amLyricsLook(k){
   gv.style.transform = k > 0 ? `translateX(${(k * AM_HIDE.drift * innerWidth).toFixed(1)}px)` : '';
   setLiveGLLast('');                                // the picture changes with it
 }
+/* a window that goes from wide to tall, or back (the cover, the lyrics' area and the controls change their layout):
+   instead of jumping, each goes from where it was to where it is now. The cover with its title and artist moves and
+   changes size as one piece (the same scale both ways: nothing is stretched), the controls and the lyrics come in from
+   their old place, rising out of nothing. All of it is made with transforms on the elements; nothing is laid out again.
+   coverOri: the shape the last frame had (null: not known, the first frame, or the panel was off); coverReg: the
+   lyrics' area then. */
+const ORIENT = { dur: 640, lyricsWait: 90, ease: 'cubic-bezier(.3,.05,.12,1)' };
+let coverOri = null, coverReg = null;
+const rectOf = e => { const b = e.getBoundingClientRect(); return { x: b.left, y: b.top, w: b.width, h: b.height }; };
+function orientSnap(){
+  const bar = document.querySelector('.bottom');
+  return { art: rectOf($('covArt')), bar: bar ? rectOf(bar) : null, reg: coverReg };
+}
+function orientGlide(was, el, reg){
+  if (matchMedia('(prefers-reduced-motion:reduce)').matches || typeof el.animate !== 'function') return;
+  const O = { duration: ORIENT.dur, easing: ORIENT.ease };
+  const tag = (target, anim) => { anim.id = 'orient'; return anim; };
+  for (const t of [el, $('glView'), document.querySelector('.bottom')]) if (t) t.getAnimations().filter(a => a.id === 'orient').forEach(a => a.cancel());
+  const art = rectOf($('covArt'));
+  if (was.art.w > 1 && art.w > 1)
+    tag(el, el.animate([{ transformOrigin: '0 0', transform: `translate(${was.art.x - art.x}px,${was.art.y - art.y}px) scale(${was.art.w / art.w})` },
+      { transformOrigin: '0 0', transform: 'none' }], O));
+  const bar = document.querySelector('.bottom');
+  if (bar && was.bar && was.bar.w > 1){
+    const nb = rectOf(bar), op = getComputedStyle(bar).opacity;
+    tag(bar, bar.animate([{ transform: `translate(${was.bar.x + was.bar.w / 2 - nb.x - nb.w / 2}px,${was.bar.y + was.bar.h / 2 - nb.y - nb.h / 2}px)`, opacity: 0 },
+      { transform: 'none', opacity: op }], O));
+  }
+  const gv = $('glView');
+  if (was.reg && gv){
+    const dx = was.reg.x + was.reg.w / 2 - reg.x - reg.w / 2, dy = was.reg.y + was.reg.h / 2 - reg.y - reg.h / 2, op = getComputedStyle(gv).opacity;
+    tag(gv, gv.animate([{ transform: `translate(${dx}px,${dy}px)`, opacity: 0 }, { transform: 'none', opacity: op }],
+      { ...O, delay: ORIENT.lyricsWait, fill: 'backwards' }));
+  }
+}
 function updateCoverPanel(){
   const el = $('coverPanel');
   document.body.classList.toggle('cover-on', useCoverPanel());      // style.css: the header's own title steps aside in portrait
-  if (!useCoverPanel()){ coverSlide(el, false); coverPanelKey = ''; document.body.classList.remove('am'); amLyricsLook(0); if (coverVideo && !coverVideo.paused) coverVideo.pause(); return; }
+  if (!useCoverPanel()){ coverSlide(el, false); coverPanelKey = ''; coverOri = null; document.body.classList.remove('am'); amLyricsLook(0); if (coverVideo && !coverVideo.paused) coverVideo.pause(); return; }
   if (coverVideo && coverVideo.paused && coverVideo.isConnected) coverVideo.play().catch(() => {});      // a moving cover plays while the panel shows
   const r = liveRect(), L = coverLayout(r.width, r.height);
   const key = [r.left, r.top, r.width, r.height, coverTitle(), coverArtist(), coverURL, !!L.am, L.am ? L.hide.toFixed(4) : 0].join('|');
   amLyricsLook(L.am ? L.hide : 0);
   if (!coverPanelDirty && key === coverPanelKey) return;
   coverPanelDirty = false; coverPanelKey = key;
+  const ori = L.region.portrait ? 'tall' : 'wide';
+  const was = coverOri !== null && ori !== coverOri && !el.hidden && !el.classList.contains('away') ? orientSnap() : null;      // before anything is moved
   // AM 布局: the controls go under the cover (style.css body.am puts the bottom bar where these say)
   document.body.classList.toggle('am', !!L.am);
   if (L.am){
     const st = document.documentElement.style;
     st.setProperty('--am-x', r.left + L.ctrl.x + 'px'); st.setProperty('--am-y', r.top + L.ctrl.y + 'px'); st.setProperty('--am-w', L.ctrl.w + 'px'); st.setProperty('--am-up', (L.ctrl.y - L.ty) + 'px');
+    // the row of buttons is 324 px wide at its natural size: a narrower cover (a narrow window) takes them all smaller
+    st.setProperty('--am-k', Math.min(1, L.ctrl.w / 330).toFixed(3));
   }
   Object.assign(el.style, { left: r.left + L.x + 'px', top: r.top + L.y + 'px' });
   el.style.setProperty('--away', -(r.left + Math.max(L.x + L.s * 1.2, L.tx + L.tw + 8)) + 'px');      // how far left is outside the window: shadow, title and all
@@ -206,6 +245,8 @@ function updateCoverPanel(){
   for (const [e, fs, dy] of [[ti, L.tfs, 0], [ar, L.afs, L.tfs * 1.35]]){
     Object.assign(e.style, { position: 'absolute', left: (L.tx - L.x) + 'px', top: (L.ty - L.y + dy) + 'px', width: L.tw + 'px', fontSize: fs + 'px', lineHeight: '1.2' });
   }
+  if (was) orientGlide(was, el, L.region);
+  coverOri = ori; coverReg = { x: L.region.x, y: L.region.y, w: L.region.w, h: L.region.h };
 }
 /* a measurer and timeline for the lyrics area next to the cover (narrower, so lines wrap for it) */
 function regionM(M, rw, rh, portrait, anchor){

@@ -1,6 +1,6 @@
 // Background vocals (web/js/core/core.js): lines sung while another one is become its background. Run: node tests/test_bgvocals.js
 const { moduleSource } = require('./module-source');
-const { mergeSimultaneous, bgAdd } = new Function(moduleSource('core/core.js') + '\nreturn { mergeSimultaneous, bgAdd };')();
+const { mergeSimultaneous, bgAdd, bgPiece } = new Function(moduleSource('core/core.js') + '\nreturn { mergeSimultaneous, bgAdd, bgPiece };')();
 
 let fails = 0;
 function eq(name, got, want){
@@ -67,6 +67,26 @@ const B = {};
 bgAdd(B, { t: 1, end: 2, en: 'x', zh: '', wt: [{ w: 'x', s: 1, e: 2 }], wtText: 'x' });
 bgAdd(B, { t: 2, end: 3, en: 'y', zh: '' });
 eq('no word times for all: none', B.bg.wt, undefined);
+
+// the background vocals' own times, unless they cannot be right. "Stan" (AMLL TTML DB) writes "((screaming)" under a line
+// at 4:31 as 0 to 0: with that time the line went to the start of the song and swallowed every line up to its place
+{
+  const L = line(271.17, 273.72, "See Slim, shut up bitch! I'm tryin to talk!");
+  const zero = { t: 0, end: 0, en: 'screaming', zh: '尖叫声', wt: [{ w: 'screaming', s: 0, e: 0, m: true }], wtText: 'screaming' };
+  const p0 = bgPiece(L, zero);
+  eq('a background at 0 to 0 is sung with the line', [p0.t, p0.end, p0.en, p0.zh, p0.wt], [271.17, 273.72, 'screaming', '尖叫声', undefined]);
+  const far = { t: 12, end: 14, en: 'far', wt: [{ w: 'far', s: 12, e: 14, m: true }] };
+  eq('a background far from its line is sung with it too', bgPiece(L, far).t, 271.17);
+  const ok = { t: 270.9, end: 272.4, en: 'oh', wt: [{ w: 'oh', s: 270.9, e: 272.4, m: true }], wtText: 'oh' };
+  eq('a background with real times keeps them', [bgPiece(L, ok).t, bgPiece(L, ok).end, !!bgPiece(L, ok).wt], [270.9, 272.4, true]);
+  const lines = [line(1, 3, 'one'), L, line(300, 302, 'last')];
+  bgAdd(L, bgPiece(L, zero));
+  eq('the line stays where it is sung', [L.t, L.bg.above], [271.17, false]);
+  eq('and nothing before it is taken in', texts(mergeSimultaneous(lines)), ['one', "See Slim, shut up bitch! I'm tryin to talk!", 'last']);
+}
+
+// a "line" sung for minutes (its times are wrong) takes nothing into it: the lines stay as they are
+eq('a line of bad times takes no other line', texts(mergeSimultaneous([line(0, 273.72, 'long'), line(5, 8, 'a'), line(10, 13, 'b')])), ['long', 'a', 'b']);
 
 console.log(fails ? `${fails} failed` : 'all passed');
 process.exit(fails ? 1 : 0);

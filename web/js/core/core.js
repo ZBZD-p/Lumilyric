@@ -4,6 +4,7 @@ export {
   CJK_PUNCT,
   SAMPLE,
   bgAdd,
+  bgPiece,
   duetSides,
   mergeSimultaneous,
   parseLRC,
@@ -122,14 +123,23 @@ function bgAdd(A, b){
    of that line still to come (BG.over; less than that is a line that was only timed a little early). Once a line has
    one, the line that carries straight on from it (within BG.next) while the main line is still sung is taken too.
    lines: in order of time, with their own times (L.wt, or L.pEnd for where a line ends). */
-const BG = { after: 0.15, over: 0.8, next: 0.1 };
+const BG = { after: 0.15, over: 0.8, next: 0.1, far: 10, maxLine: 30 };      // maxLine: seconds; a line sung longer than that is not a line (bad times), nothing is taken into it
 const sungEnd = L => L.wt && L.wt.length ? L.wt[L.wt.length - 1].e : L.pEnd ?? L.t;
+/* The piece of background vocals b (shaped like a line) as it is put on line L (bgAdd). It keeps its own times, unless
+   they cannot be right: no time at all (a TTML that writes the background as 0 to 0, "00:00.000", which took the line
+   it stood under to the start of the song, with every line up to its own place swallowed as its background vocals), or
+   more than BG.far seconds from the line. Then it is sung with the line, untimed. */
+function bgPiece(L, b){
+  const end = sungEnd(b), lineEnd = sungEnd(L);
+  if (end > b.t && b.t > L.t - BG.far && b.t < lineEnd + BG.far) return { t: b.t, end, en: b.en, zh: b.zh, wt: b.wt, wtText: b.wtText };
+  return { t: L.t, end: lineEnd, en: b.en, zh: b.zh };
+}
 function mergeSimultaneous(lines){
   const out = [];
   let A = null, tail = null;                  // the line being sung; where the last piece taken into it ends
   for (const B of lines){
     const endA = A ? sungEnd(A) : -Infinity;
-    if (A && ((B.t >= A.t + BG.after && endA - B.t >= BG.over) || (tail !== null && B.t < endA && Math.abs(B.t - tail) <= BG.next))){
+    if (A && endA - A.t <= BG.maxLine && ((B.t >= A.t + BG.after && endA - B.t >= BG.over) || (tail !== null && B.t < endA && Math.abs(B.t - tail) <= BG.next))){
       tail = sungEnd(B);
       bgAdd(A, { t: B.t, end: tail, en: B.en, zh: B.zh, wt: B.wt, wtText: B.wtText });
       if (B.bg) bgAdd(A, B.bg);

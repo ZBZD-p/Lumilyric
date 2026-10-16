@@ -1,5 +1,5 @@
 import { late } from './late.js';
-import { CHARWISE, CJK, CJK_PUNCT, SAMPLE, bgAdd, mergeSimultaneous, parseLRC, sungEnd } from './core.js';
+import { CHARWISE, CJK, CJK_PUNCT, SAMPLE, bgAdd, bgPiece, mergeSimultaneous, parseLRC, sungEnd } from './core.js';
 
 export {
   $,
@@ -148,7 +148,7 @@ function parseTTML(text){
     const L = main.L || bgs.shift();           // background vocals with no line to stand under are the line
     if (!L) continue;
     // background vocals (core.js, bgAdd): over the line when they begin before it does, and the line begins with them
-    for (const b of bgs) bgAdd(L, { t: b.t, end: sungEnd(b), en: b.en, zh: b.zh, wt: b.wt, wtText: b.wtText });
+    for (const b of bgs) bgAdd(L, bgPiece(L, b));
     if (L.bg && L.bg.t < L.t - 0.05){ L.bg.above = true; L.t = L.bg.t; }
     const ag = agentOf(p) || (p.parentNode && p.parentNode.getAttribute && agentOf(p.parentNode));
     if (ag) L.who = groupIds.has(ag) ? '合' : ag;

@@ -55,7 +55,7 @@ function applyFx(){
   $('fxPerfLiteRow').hidden = $('fxPerfPosRow').hidden = $('fxPerfSizeRow').hidden = !fx.showFps;
   $('fxCover').checked = !!fx.cover; setCoverPanelDirty(true);
   $('fxAM').checked = !!fx.am && !!fx.cover;
-  $('amLyr').setAttribute('aria-pressed', String(fx.amLyrics !== false && !document.body.classList.contains('am-queue')));      // AM 布局: the lyrics button (js/ui/am.js); off while the play list stands in their place
+  $('amLyr').setAttribute('aria-pressed', String(fx.amLyrics !== false && !(late.noLyrics && late.noLyrics()) && !document.body.classList.contains('am-queue')));      // AM 布局: the lyrics button (js/ui/am.js); off while the play list stands in their place
   if (!fx.showFps) $('fps').hidden = true;
   // The lyric canvas keeps its text sprites; only what is baked into them needs new ones: the renderer, and the glow
   // when it is not the GPU's bloom. Any other setting is read when a frame is drawn, so a redraw is enough. (Rebuilding
@@ -111,10 +111,12 @@ function applyFx(){
   $('fxGlowHoldV').textContent = g.hold > 0 ? Math.round(g.hold * 100) + '%' : '关';
   $('fxGlowHoldFrom').value = g.holdFrom;
   $('fxGlowHoldFromV').textContent = g.holdFrom.toFixed(1) + ' s';
+  $('fxGlowFloat').value = Math.round((g.float ?? 1) * 100);
+  $('fxGlowFloatV').textContent = (g.float ?? 1) > 0 ? Math.round((g.float ?? 1) * 100) + '%' : '关';
   $('fxGlowColor').value = g.color;
   document.querySelectorAll('#fxGlowStyle button').forEach(b => b.setAttribute('aria-pressed', b.dataset.style === (g.style || 'soft')));
   document.querySelectorAll('#fxGlowSwatches .sw').forEach(b => b.setAttribute('aria-pressed', b.dataset.c === g.color));
-  ['fxGlowStrength', 'fxGlowRadius', 'fxGlowThresh', 'fxGlowHold', 'fxGlowHoldFrom'].forEach(id => { const el = $(id); el.style.setProperty('--p', ((el.value - el.min) / (el.max - el.min) * 100) + '%'); });
+  ['fxGlowStrength', 'fxGlowRadius', 'fxGlowThresh', 'fxGlowHold', 'fxGlowHoldFrom', 'fxGlowFloat'].forEach(id => { const el = $(id); el.style.setProperty('--p', ((el.value - el.min) / (el.max - el.min) * 100) + '%'); });
 }
 function setFx(patch){ Object.assign(fx.glow, patch); saveFx(); applyFx(); }
 function setAnim(v){ if (!ANIMS.includes(v) || v === fx.anim) return; fx.anim = v; saveFx(); applyFx(); setCur(null); render(true); }
@@ -242,6 +244,7 @@ let coverAskSeq = 0, coverAskPick = null;       // coverAskPick: a ready-made ca
 async function autoCoverAsk(){
   coverAskPick = null;
   if (!late.helper || !lrcSong) return;
+  if (late.onlineNow && late.onlineNow()) return;      // a song from a music account: it has its album's picture (player/online.js)
   const m = lrcSong.meta || {};
   const q = ([m.ti, m.ar].filter(Boolean).join(' ') || lrcName.replace(/[_\-–—]+/g, ' ')).replace(/^示例 · /, '').trim();
   if (!q) return;
@@ -316,6 +319,7 @@ $('fxGlowRadius').oninput = e => setFx({ radius: e.target.value / 100 });
 $('fxGlowThresh').oninput = e => setFx({ thresh: e.target.value / 100 });
 $('fxGlowHold').oninput = e => setFx({ hold: e.target.value / 100 });
 $('fxGlowHoldFrom').oninput = e => setFx({ holdFrom: +e.target.value });
+$('fxGlowFloat').oninput = e => setFx({ float: e.target.value / 100 });
 $('fxGlowColor').oninput = e => setFx({ color: e.target.value });
 document.querySelectorAll('#fxGlowStyle button').forEach(b => b.onclick = () => setFx({ style: b.dataset.style, on: true }));
 document.querySelectorAll('#fxGlowSwatches .sw').forEach(b => b.onclick = () => setFx({ color: b.dataset.c, on: true }));

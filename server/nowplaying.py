@@ -19,6 +19,7 @@ the previous song's end position, with a fresh timestamp.
 import asyncio
 import hashlib
 import importlib.util
+import json
 import os
 import sys
 import threading
@@ -29,6 +30,8 @@ import lyrics_match as LM
 import disk_cache as DC
 import qqweb
 import qqcmd
+import qqdata
+import music_apis
 from track_state import PlayerState
 
 # QQ 网页跟随: the embedded QQ web player (desktop only) is fed in as if it were a player, so lyrics, position,
@@ -110,18 +113,203 @@ def set_external_queue(items, mode=""):
             _EXT_QUEUE["ver"] += 1
 
 
-def queue(app=""):
-    """The play list of the player followed, for the AM layout's list. Only the QQ web window has one to give: the
-    system's media session (every other player) tells what plays, not what comes next."""
+_QQ_SNAP = {}                         # app id -> the rows of QQ Music's list as last shown (with song numbers), for a click on row i
+
+
+def _qq_queue(m, dur, list_id, cache):
+    """QQ Music (the program) does not give its play queue to anyone, so the list is made of what can be had: what was
+    played lately (the lyric files it keeps), the song playing now, and the songs of a public play list the user named
+    (after the song playing now when it is one of them). qqdata.py."""
+    root, how, found = qqdata.cache_root(cache)
+    nt, na = qqdata.norm(m["title"]), qqdata.artists_of(m["artist"])
+
+    def is_cur(title, artist):
+        sa = qqdata.artists_of(artist)
+        return qqdata.norm(title) == nt and (not na or not sa or bool(na & sa))
+    hist = [h for h in qqdata.history(root, qqdata.HISTORY_MAX) if not is_cur(h["title"], h["artist"])]
+    hist.reverse()                                       # oldest first: the newest stands next to the song playing now
+    row = lambda title, artist, album, sec, **kw: dict({"title": title, "artist": artist, "album": album, "dur": int(sec or 0), "cover": "", "now": False, "vip": False}, **kw)
+    rows = [row(h["title"], h["artist"], h["album"], h["dur"], cover=qqdata.cover_for(h["title"], h["artist"], h["dur"]),      # (a picture comes a moment later, on the next ask)
+                _find=(h["title"], h["artist"], h["dur"])) for h in hist]
+    cur = row(m["title"], m["artist"], m["album"], round(dur), now=True, _find=(m["title"], m["artist"], dur))
+    rows.append(cur)
+    qqdata.cover_for(m["title"], m["artist"], dur)       # (its numbers are looked up now, for the heart: a click on the star is then at once)
+    pid = qqdata.parse_playlist_id(list_id) if list_id != "liked" else ""
+    title, err, count = "", "", 0
+    if list_id == "liked":
+        pid = "liked"
+        if not music_apis.user("qq"):
+            err = "先在设置里登录 QQ 音乐，才能显示「我喜欢」"
+        else:
+            try:
+                songs = music_apis.liked_songs("qq", 200)
+                title, count = "我喜欢", len(songs)
+                for s in songs:
+                    rows.append(row(s["name"], " / ".join(s["singers"]), s["album"], s["interval"], cover=s["cover"], _songid=s["id"], _songmid=s["mid"]))
+            except music_apis.ApiError as e:
+                err = str(e)
+    elif pid:
+        try:
+            pl = qqdata.playlist(pid)
+            title, songs = pl["title"], pl["songs"]
+            count = len(songs)
+            at = next((i for i, s in enumerate(songs) if is_cur(s["name"], " / ".join(s["singers"]))), -1)
+            if at >= 0:
+                cur["cover"] = qqdata.cover_url(songs[at]["albummid"])
+            for s in (songs[at + 1:] if at >= 0 else songs):
+                rows.append(row(s["name"], " / ".join(s["singers"]), s["album"], s["interval"], cover=qqdata.cover_url(s["albummid"]),
+                                _songid=s["songid"], _songmid=s["songmid"]))
+        except Exception as e:
+            err = str(e) or "读歌单失败"
+    with _LOCK:
+        _QQ_SNAP[m["app"]] = rows
+    items = [{k: v for k, v in r.items() if not k.startswith("_")} for r in rows]
+    info = {"root": root, "how": how, "found": found, "history": len(hist), "list": pid, "listTitle": title, "listCount": count, "listErr": err}
+    ver = hashlib.sha1(json.dumps([items, info], ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()[:12]
+    return {"ok": True, "app": m["app"], "ver": ver, "mode": "", "items": items, "qq": info}
+
+
+def _qq_action(m, action, position):
+    """A click in QQ Music's list, or its heart: through the player's own command line (qqcmd.py)."""
+    if action in ("removeAt", "openAt", "mode"):
+        return {"ok": False, "reason": "QQ 音乐桌面版没法这样操作（这里的列表是最近播放和你选的歌单，不是它的播放队列）"}
+    if action in ("favorite", "unfavorite"):
+        if music_apis.user("qq"):
+            return _acct_like(m, "qq", action == "favorite")       # signed in: the account's own heart, read back
+        with _LOCK:
+            st = _PLAYERS.get(m["app"])
+        dur = st.duration(time.time()) if st else 0
+        song = qqdata.find_song(m["title"], m["artist"], dur)
+        if not song or not song.get("songmid"):
+            return {"ok": False, "reason": "在 QQ 音乐的曲库里没找到这首歌，没法收藏"}
+        ok, why = qqcmd.favorite(song["songmid"], action == "favorite")
+        return {"ok": ok, "reason": why, "liked": None}
+    try:
+        i = int(position)
+    except (TypeError, ValueError):
+        return {"ok": False, "reason": "没有给出是哪一首"}
+    with _LOCK:
+        rows = _QQ_SNAP.get(m["app"]) or []
+    if not 0 <= i < len(rows):
+        return {"ok": False, "reason": "列表已经变了，再点一次"}
+    r = rows[i]
+    if r.get("now"):
+        return {"ok": True, "reason": ""}
+    sid = r.get("_songid")
+    if not sid:
+        song = qqdata.find_song(*r["_find"])
+        sid = song and song.get("songid")
+    if not sid:
+        return {"ok": False, "reason": "在 QQ 音乐的曲库里没找到这首歌"}
+    ok, why = qqcmd.play_song(sid)
+    return {"ok": ok, "reason": why}
+
+
+def _acct_song(m, svc):
+    """The song the player is on, as the account's service knows it (or None). Kept per song: it is asked for often."""
+    with _LOCK:
+        st = _PLAYERS.get(m["app"])
+        dur = st.duration(time.time()) if st else 0
+        hit = _ACCT_SONG.get((svc, m["tid"]))
+    if hit is not None:
+        return hit or None
+    song = music_apis.find(svc, m["title"], m["artist"], dur)
+    with _LOCK:
+        if len(_ACCT_SONG) > 200:
+            _ACCT_SONG.clear()
+        _ACCT_SONG[(svc, m["tid"])] = song or {}
+    return song
+
+
+_ACCT_SONG = {}
+
+
+def _acct_like(m, svc, on):
+    """The star: the song in the account's 我喜欢 (or out of it), and what the service says it is now."""
+    if not music_apis.user(svc):
+        return {"ok": False, "reason": f"先在设置里登录{music_apis.SERVICES[svc]['name']}", "liked": None}
+    song = _acct_song(m, svc)
+    if not song:
+        return {"ok": False, "reason": f"在{music_apis.SERVICES[svc]['name']}的曲库里没找到这首歌", "liked": None}
+    ok, liked, why = music_apis.set_liked(svc, song, on)
+    return {"ok": ok, "reason": why, "liked": liked}
+
+
+def liked_now(app=""):
+    """{svc, known, liked, signedIn}: whether the account likes the song the player is on (for the star)."""
+    with _LOCK:
+        m, _ = _pick(app)
+    if not m:
+        return {"ok": False, "known": False}
+    svc = music_apis.service_of(m["app"]) if m["app"] != EXT_APP else ""
+    if not svc or not music_apis.user(svc):
+        return {"ok": True, "svc": svc, "known": False, "signedIn": False}
+    song = _acct_song(m, svc)
+    v = music_apis.is_liked(svc, song) if song else None
+    return {"ok": True, "svc": svc, "known": v is not None, "liked": bool(v), "signedIn": True, "trackId": m["tid"]}
+
+
+def _acct_queue(m, dur, svc):
+    """NetEase / KuGou: what the account played lately, the song now, and what it likes. Shown only: those programs
+    cannot be told to play a song."""
+    name = music_apis.SERVICES[svc]["name"]
+    u = music_apis.user(svc)
+    nt, na = qqdata.norm(m["title"]), qqdata.artists_of(m["artist"])
+
+    def is_cur(title, singers):
+        sa = qqdata.artists_of(" / ".join(singers))
+        return qqdata.norm(title) == nt and (not na or not sa or bool(na & sa))
+    row = lambda s, **kw: dict({"title": s["name"], "artist": " / ".join(s["singers"]), "album": s["album"], "dur": int(s["interval"] or 0),
+                                "cover": s["cover"], "now": False, "vip": False}, **kw)
+    rows, err, hist_n, liked_n = [], "", 0, 0
+    if u:
+        try:
+            recent = [s for s in music_apis.recent_songs(svc, 40) if not is_cur(s["name"], s["singers"])]
+            hist_n = len(recent)
+            rows += [row(s) for s in reversed(recent)]
+        except music_apis.ApiError as e:
+            err = str(e)
+    rows.append({"title": m["title"], "artist": m["artist"], "album": m["album"], "dur": int(dur or 0), "cover": "", "now": True, "vip": False})
+    if u:
+        try:
+            liked = music_apis.liked_songs(svc, 200)
+            liked_n = len(liked)
+            rows += [row(s) for s in liked if not is_cur(s["name"], s["singers"])]
+        except music_apis.ApiError as e:
+            err = err or str(e)
+    info = {"svc": svc, "name": name, "user": (u or {}).get("name", ""), "signedIn": bool(u), "history": hist_n, "liked": liked_n, "err": err}
+    ver = hashlib.sha1(json.dumps([rows, info], ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()[:12]
+    return {"ok": True, "app": m["app"], "ver": ver, "mode": "", "items": rows, "acct": info}
+
+
+def queue(app="", list_id="", cache=""):
+    """The play list of the player followed, for the AM layout's list. The QQ web window has one to give; QQ Music itself
+    gets a made one (_qq_queue); the system's media session (every other player) tells what plays, not what comes next."""
     _refresh()                            # (the reader runs once anything has been asked)
     with _LOCK:
         m, _ = _pick(app)
         if not m:
             return {"ok": False, "reason": "没有在跟随播放器"}
-        if m["app"] != EXT_APP:
-            return {"ok": False, "reason": f"{m['appName'] or '这个播放器'}没有把播放列表交给系统，只有「QQ 网页跟随」能读到列表"}
-        return {"ok": True, "app": EXT_APP, "ver": _EXT_QUEUE["ver"], "mode": _EXT_QUEUE["mode"],
-                "items": list(_EXT_QUEUE["items"])}
+        if m["app"] == EXT_APP:
+            return {"ok": True, "app": EXT_APP, "ver": _EXT_QUEUE["ver"], "mode": _EXT_QUEUE["mode"],
+                    "items": list(_EXT_QUEUE["items"])}
+        svc = music_apis.service_of(m["app"])
+        if svc in ("netease", "kugou"):
+            m = dict(m)
+            st = _PLAYERS.get(m["app"])
+            dur = st.duration(time.time()) if st else 0
+            acct = True
+        else:
+            acct = False
+        if not acct and not (is_qq_desktop(m["app"]) and qqcmd.find_exe()):
+            return {"ok": False, "reason": f"{m['appName'] or '这个播放器'}没有把播放列表交给系统，只有「QQ 网页跟随」和 QQ 音乐能显示列表"}
+        if not acct:
+            m = dict(m)
+            st = _PLAYERS.get(m["app"])
+            dur = st.duration(time.time()) if st else 0
+    if acct:
+        return _acct_queue(m, dur, svc)
+    return _qq_queue(m, dur, list_id, cache)         # (outside the lock: it reads the disk and may ask the web)
 
 
 def has_cover(tid):
@@ -632,7 +820,7 @@ def _qq_command(app, action, position):
 
 
 def control(action, position=None, app=""):
-    if action not in ("play", "pause", "next", "prev", "seek", "volume", "playAt", "removeAt", "openAt", "mode"):
+    if action not in ("play", "pause", "next", "prev", "seek", "volume", "playAt", "removeAt", "openAt", "mode", "favorite", "unfavorite"):
         return {"ok": False, "reason": "不认识的操作"}
     if MOCK:
         if action == "volume":
@@ -672,6 +860,13 @@ def control(action, position=None, app=""):
         return qqweb.control(action)
     if is_qq_desktop(m["app"]) and action in ("seek", "volume"):
         return _qq_command(m["app"], action, position)
+    if is_qq_desktop(m["app"]) and action in ("playAt", "removeAt", "openAt", "mode", "favorite", "unfavorite"):
+        return _qq_action(m, action, position)
+    svc = music_apis.service_of(m["app"])
+    if svc in ("netease", "kugou") and action in ("favorite", "unfavorite"):
+        return _acct_like(m, svc, action == "favorite")
+    if svc in ("netease", "kugou") and action in ("playAt", "removeAt", "openAt", "mode"):
+        return {"ok": False, "reason": f"{music_apis.SERVICES[svc]['name']}桌面版没法从这里点歌（它没有给外部用的接口）"}
     if action == "volume":                                  # only QQ Music can be asked for one
         return {"ok": False, "reason": "这个播放器不支持调音量"}
     try:

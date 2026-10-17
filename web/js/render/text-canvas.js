@@ -16,6 +16,9 @@ export {
   drawSeg,
   easeOut,
   HOLD,
+  FLOAT,
+  floatLetter,
+  holdFloat,
   holdGlow,
   layoutSeg,
   letterLift,
@@ -66,13 +69,35 @@ const liftSplit = (s, du) => du >= LIFT_SLOW && LIFT_SPLIT.test(s);
    must last for none .. all of it (s); gain: the most light added (not much: the word is white already); blur: how
    wide the extra light is (px at 72 px type); fade: how long it takes to settle (s). 长音增亮 (fx.glow.hold) scales
    the gain: 1 = as given here, 0 = none. 触发时长 (fx.glow.holdFrom) moves from, and full along with it. */
-const HOLD = { from: 0.8, full: 1.8, gain: 0.3, blur: 10, fade: 0.8 };
+const HOLD = { from: 0.5, full: 1.5, gain: 0.3, blur: 10, fade: 0.8 };
 const smooth01 = x => x <= 0 ? 0 : x >= 1 ? 1 : x * x * (3 - 2 * x);
 const holdStrength = kar => kar && kar.hold && fx.glow.on ? HOLD.gain * (fx.glow.hold ?? 1) * clamp01((kar.hold - (fx.glow.holdFrom ?? HOLD.from)) / (HOLD.full - HOLD.from)) : 0;
 function holdGlow(kar, k, t){                 // the extra light on word k at t: 0 .. HOLD.gain * fx.glow.hold
   if (k !== kar.st.length - 1) return 0;
   const s = holdStrength(kar), el = t - kar.st[k];
   return s && el > 0 ? s * smooth01(el / kar.hold) * (1 - smooth01((el - kar.hold) / HOLD.fade)) : 0;
+}
+/* 悬浮: the last word of a line, held long. As the sweep reaches each letter, that letter floats up a little and grows a
+   little, and comes down again, each in its turn: a swell that runs along the word with the light, every letter back where
+   it was when its own turn is over (it does not stay up). How much, by how long the word is held (as for the light,
+   HOLD.from .. full), times 长音悬浮 (fx.glow.float): 0 = none.
+   rise: how high a letter goes, of the type size; scale: the most it grows; dur: s from the light reaching the letter to
+   it being down again; peak: how far into that it is highest (the share of dur). */
+const FLOAT = { rise: 0.1, scale: 0.12, dur: 1.2, peak: 0.35 };
+function holdFloat(kar, k){                     // 0 .. fx.glow.float: how floating word k is (only the last word, only when held long)
+  if (!kar || !kar.hold || k !== kar.st.length - 1 || !fx.glow.on) return 0;      // (it is among the glow's settings: off with it)
+  return (fx.glow.float ?? 1) * clamp01((kar.hold - (fx.glow.holdFrom ?? HOLD.from)) / (HOLD.full - HOLD.from));
+}
+/* one letter's swell: 0 before its turn, 1 at the top (peak), 0 again once it is down; p: how far through its turn */
+const floatPulse = p => p <= 0 || p >= 1 ? 0 : p < FLOAT.peak ? smooth01(p / FLOAT.peak) : 1 - smooth01((p - FLOAT.peak) / (1 - FLOAT.peak));
+/* a letter (or a word in one piece: the mean of its letters) at time t: how much higher it stands (of the type size)
+   and how much larger it is drawn, over the place it has on the line. hf: holdFloat; ts: when the light reaches each
+   of the letters it stands for */
+function floatLetter(hf, t, ts){
+  let u = 0;
+  for (const t0 of ts) u += floatPulse((t - t0) / FLOAT.dur);
+  u = Math.min(2, hf * u / ts.length);
+  return { up: FLOAT.rise * u, sc: 1 + FLOAT.scale * u };
 }
 /* when a letter starts to rise and for how long: it lies from x0 to x1 in its word; the sweep crosses span (the word
    and half the soft edge, see sweepRaw) in the word's time. The first letter starts with the word, as before. */
@@ -98,13 +123,21 @@ function letterEdges(tk, M){                 // where each letter of the word st
    Returns true while anything is still rising. */
 function liftWord(tk, M, kar, t, SE, paint, whole){
   const st = kar.st[tk.k], du = kar.du[tk.k], lx = !whole && du >= LIFT_SLOW ? letterEdges(tk, M) : null;
-  if (!lx){ const p = (t - st) / liftDur(du); paint(liftE(p), tk.s, 0, tk.w); return p > 0 && p < 1; }
+  if (!lx){
+    const p = (t - st) / liftDur(du);
+    // kept in one piece (a word that would be split, while it is blurred: a line on its way out), it still floats as its
+    // letters do: ts, when the light reaches each of them
+    const le = whole && du >= LIFT_SLOW ? letterEdges(tk, M) : null, span = tk.w + SE / 2;
+    const ts = le ? le.slice(0, -1).map((x, i) => letterLift(st, du, x, le[i + 1], span)[0]) : [st];
+    paint(liftE(p), tk.s, 0, tk.w, 0, ts);
+    return p > 0 && p < 1;
+  }
   const cs = tk.cs, span = tk.w + SE / 2;
   let moving = false;
   for (let i = 0; i < cs.length; i++){
     const [t0, d] = letterLift(st, du, lx[i], lx[i + 1], span), p = (t - t0) / d;
     if (p > 0 && p < 1) moving = true;
-    paint(liftE(p), cs[i], lx[i], M.w(cs[i], false));
+    paint(liftE(p), cs[i], lx[i], M.w(cs[i], false), i, [t0]);
   }
   return moving;
 }
@@ -333,7 +366,12 @@ function spriteCache(M){
   let G = null, Gx = null;
   function drawLitGroup(ctx, parts, x, y, base, lit, x1, fe, lum, blur, w){
     if (!M.blurOK) blur = 0;
-    if (lit > 0 && GL.length) for (const p of parts){ const e = x1 - p.dx; drawLit(ctx, p.s, false, x + p.dx, y + p.dy, lit, e - fe / 2 >= p.w + 1 ? Infinity : e, fe, true, lum, blur, true); }
+    if (lit > 0 && GL.length) for (const p of parts){
+      const e = x1 - p.dx, k = p.sc || 1;
+      if (k !== 1){ const cx = x + p.dx + p.w / 2, cy = y + p.dy; ctx.save(); ctx.translate(cx, cy); ctx.scale(k, k); ctx.translate(-cx, -cy); }
+      drawLit(ctx, p.s, false, x + p.dx, y + p.dy, lit, e - fe / 2 >= p.w + 1 ? Infinity : e, fe, true, lum, blur, true);
+      if (k !== 1) ctx.restore();
+    }
     let bi = 0;
     while (bi < LEVELS.length - 2 && LEVELS[bi + 1] < blur) bi++;
     const blo = LEVELS[bi], bhi = LEVELS[bi + 1];
@@ -344,14 +382,22 @@ function spriteCache(M){
     const m = ctx.getTransform(), plain = m.a === 1 && m.d === 1 && !m.b && !m.c;
     const sx = plain ? x + m.e - Math.floor(x + m.e) : 0, sy = plain ? y + m.f - Math.floor(y + m.f) : 0;
     const full = x1 - fe / 2 >= w + 1;
+    const floats = parts.some(p => p.sc && p.sc !== 1);      // letters that float and grow need room above and around
     for (const [lev, wt] of lv){
-      const s0 = get(parts[0].s, false, lev, 0), PX = s0.ox + 2, PY = s0.oy + Math.ceil(M.fs * 0.06) + 2;
-      const gw = Math.ceil(w + 2 * PX) + 2, gh = Math.ceil(s0.dh + M.fs * 0.12) + 6;
+      const s0 = get(parts[0].s, false, lev, 0), PX = s0.ox + 2 + (floats ? Math.ceil(M.fs * 0.12) : 0), PY = s0.oy + Math.ceil(M.fs * (floats ? 0.26 : 0.06)) + 2;
+      const gw = Math.ceil(w + 2 * PX) + 2, gh = Math.ceil(s0.dh + M.fs * (floats ? 0.52 : 0.12)) + 6;
       if (!G || G.width < gw || G.height < gh){ G = mk(Math.max(gw, G ? G.width : 0), Math.max(gh, G ? G.height : 0)); Gx = G.getContext('2d'); }
       // all of it, not only the part in use: put down between two pixels or scaled, the edge of that part takes in a
       // little of what lies just outside it, and what an earlier, wider word left there showed as a thin white line
       Gx.globalCompositeOperation = 'source-over'; Gx.globalAlpha = 1; Gx.clearRect(0, 0, G.width, G.height);
-      for (const p of parts){ const sp = get(p.s, false, lev, 0); Gx.drawImage(sp.c, PX + sx + p.dx - sp.ox, PY + sy + p.dy - sp.oy, sp.dw, sp.dh); }
+      for (const p of parts){
+        const sp = get(p.s, false, lev, 0), k = p.sc || 1;
+        if (k === 1){ Gx.drawImage(sp.c, PX + sx + p.dx - sp.ox, PY + sy + p.dy - sp.oy, sp.dw, sp.dh); continue; }
+        const cx = PX + sx + p.dx + p.w / 2, cy = PY + sy + p.dy;      // a floating letter grows about its middle
+        Gx.save(); Gx.translate(cx, cy); Gx.scale(k, k); Gx.translate(-cx, -cy);
+        Gx.drawImage(sp.c, PX + sx + p.dx - sp.ox, PY + sy + p.dy - sp.oy, sp.dw, sp.dh);
+        Gx.restore();
+      }
       const out = a => { if (a > 0.002){ ctx.globalAlpha = Math.min(1, a) * spriteAlphaMul; ctx.drawImage(G, 0, 0, gw, gh, x - sx - PX, y - sy - PY, gw, gh); } };
       out(base * wt);
       if (lit <= 0) continue;
@@ -429,18 +475,23 @@ function drawSeg(ctx, W, H, M, seg, t, exitT){
         const ex = swc - SWo.offs[tk.k];             // sweep edge, relative to this word
         if (ex - SE / 2 >= tk.w) lit++;
         shown++;
-        const x = x0 + tk.x, y0 = cy + 0.2 * fs * (1 - lineE) + wDy, hg = holdGlow(kar, tk.k, t);
+        const x = x0 + tk.x, y0 = cy + 0.2 * fs * (1 - lineE) + wDy, hg = holdGlow(kar, tk.k, t), hf = holdFloat(kar, tk.k) * (1 - w);      // (w: how far the word is on its way out)
         if (hg > 0) moving = true;
+        if (hf > 0 && t > kar.st[tk.k] && t < kar.st[tk.k] + kar.hold + FLOAT.dur) moving = true;      // the swell runs along the word
         const leaving = xing && (exBlur + wBlur > 0.3 || wSc !== 1);      // blurred or scaled on its way out: in one piece
         const parts = [];                              // the letters of a word that lifts letter by letter
-        if (liftWord(tk, M, kar, t, SE, (l, s, dx, w) => {
-          const yy = y0 - 0.05 * fs * l, xs = x + dx, e = ex - dx;       // e: the sweep edge, relative to this piece
+        if (liftWord(tk, M, kar, t, SE, (l, s, dx, w, i, ts) => {
+          const fl = hf > 0 ? floatLetter(hf, t, ts) : null;      // a long last word floats letter by letter: higher, a little larger, and down again
+          const yy = y0 - 0.05 * fs * l - (fl ? fl.up * fs : 0), xs = x + dx, e = ex - dx;       // e: the sweep edge, relative to this piece
+          const grown = fl && fl.sc !== 1 ? fl.sc : 1, lx = xs + w / 2;
+          if (grown !== 1){ ctx.save(); ctx.translate(lx, yy); ctx.scale(grown, grown); ctx.translate(-lx, -yy); }
           if (hg > 0) SP.drawLit(ctx, s, false, xs, yy, a * hg, e - SE / 2 >= w + 1 ? Infinity : e, SE, true, a * hg, HOLD.blur * bs + exBlur + wBlur);      // a long last word: a little more light around it, as far as the sweep has come
-          if (s !== tk.s) return parts.push({ s, dx, dy: yy - y0, w });
-          if (leaving && ex - SE / 2 >= tk.w) return put(s, cx, yy, wSc, a, exBlur + wBlur, w);
+          if (s !== tk.s){ if (grown !== 1) ctx.restore(); return parts.push({ s, dx, dy: yy - y0, w, sc: grown }); }
+          if (leaving && ex - SE / 2 >= tk.w){ if (grown !== 1) ctx.restore(); return put(s, cx, yy, wSc, a, exBlur + wBlur, w); }
           // dim base (no glow) + bright part swept in from the left (same edge as the CSS gradient)
           SP.drawLit(ctx, s, false, xs, yy, a * 0.3, Infinity, 0, false);
           if (e + SE / 2 > 0) SP.drawLit(ctx, s, false, xs, yy, a * (drawOnColour ? 1 : 0.7), e - SE / 2 >= w + 1 ? Infinity : e, SE, true, a);
+          if (grown !== 1) ctx.restore();
         }, leaving)) moving = true;
         if (parts.length) SP.drawLitGroup(ctx, parts, x, y0, a * 0.3, ex + SE / 2 > 0 ? a * (drawOnColour ? 1 : 0.7) : 0, ex, SE, a, 0, tk.w);
         continue;

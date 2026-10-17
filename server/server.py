@@ -22,8 +22,21 @@ API (JSON):
                               -> {ok, reason?}   (QQ 网页跟随 only: playAt / removeAt / openAt, position = the list
                               index; mode, position = list | single | random | order. volume, position = 0-100:
                               the QQ Music program only, seek of it goes through its command line too, qqcmd.py)
-  GET  /api/nowplaying/queue?app=     the play list {ok, mode, items: [{title, artist, album, cover, dur, now, vip}]}
-                                      (QQ 网页跟随 only)
+  GET  /api/music/status                     the music accounts: {services: {qq|netease|kugou: {name, installed, running, user}}}
+  POST /api/music/login {svc, channel?}       a QR code to sign in: {key, img}; GET /api/music/login/check?svc=&key= -> {state}
+  POST /api/music/logout {svc}
+  GET  /api/music/liked?app=                  whether the account likes the song playing: {svc, known, liked}
+  GET  /api/music/qq/liked                    the QQ account's 我喜欢: {items: [{title, artist, album, dur, cover, big, mid, id}]}
+  GET  /api/music/qq/playlists                the QQ account's play lists: {lists: [{id, dirid, name, count, cover, own, liked}]}
+  GET  /api/music/qq/playlist?id=&dirid=&own= the songs of one, as above (own=0: any public list by its number)
+  GET  /api/music/qq/search?q=                songs found ({items}); a play list's link or number gives its songs ({list, items})
+  GET  /api/music/qq/prefetch?mid=&q=        have a QQ Music song's file come in (q: standard | high | lossless): {quality, preview}
+  GET  /api/music/qq/stream?mid=&q=          that file, in byte ranges as it comes in (to play in Lumilyric itself); X-Quality /
+                                              X-Preview say what it is; 404 {reason} when there is none
+  GET  /api/lyrics/find?title=&artist=&duration=&src=   the best lyrics by a song's names (LDDC), like a followed player gets
+  GET  /api/nowplaying/queue?app=&list=&cache=   the play list {ok, mode, items: [{title, artist, album, cover, dur, now, vip}]}
+                                      (QQ 网页跟随; and QQ 音乐 itself: what it played lately, the song now, and the songs of the
+                                      public play list `list` (a number or a link); `cache` names where its lyric files are)
 """
 import faulthandler, json, os, re, shutil, subprocess, sys, threading, time, traceback, uuid, zipfile
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
@@ -43,6 +56,7 @@ import align_lrc as AL                            # noqa: E402
 import lddc_bridge as LD                          # noqa: E402
 import cover_search as CS                         # noqa: E402
 import nowplaying as NP                           # noqa: E402
+import music_apis as MA                           # noqa: E402
 import audio_level as AUD                         # noqa: E402
 import push as PUSH                               # noqa: E402
 
@@ -232,9 +246,105 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(200, {"ok": False, "reason": f"{type(e).__name__}: {e}"[:200]})
         if path == "/api/nowplaying/stream":           # server push (SSE): song state when it changes, bass level as it arrives
             return self.stream((parse_qs(urlparse(self.path).query).get("app") or [""])[0])
+        if path == "/api/music/status":                # the music accounts (QQ / NetEase / KuGou): music_apis.py
+            return self.send(200, {"ok": True, "services": MA.status()})
+        if path == "/api/music/login/check":
+            q = parse_qs(urlparse(self.path).query)
+            try:
+                return self.send(200, {"ok": True, **MA.qr_check((q.get("svc") or [""])[0], (q.get("key") or [""])[0])})
+            except (MA.ApiError, KeyError) as e:
+                return self.send(200, {"ok": False, "reason": str(e)})
+        if path == "/api/music/qq/liked":              # the QQ account's 我喜欢, to play in Lumilyric itself
+            try:
+                return self.send(200, {"ok": True, "items": MA.qq_liked_rows()})
+            except MA.ApiError as e:
+                return self.send(200, {"ok": False, "reason": str(e)})
+        if path == "/api/music/qq/playlists":          # the QQ account's play lists
+            try:
+                return self.send(200, {"ok": True, "lists": MA.qq_playlists()})
+            except MA.ApiError as e:
+                return self.send(200, {"ok": False, "reason": str(e)})
+        if path == "/api/music/qq/playlist":           # the songs of one (id, dirid, own=1 for the account's own)
+            q = parse_qs(urlparse(self.path).query)
+            try:
+                return self.send(200, {"ok": True, "items": MA.qq_playlist_rows((q.get("id") or [""])[0], int((q.get("dirid") or ["0"])[0] or 0), (q.get("own") or ["0"])[0] == "1")})
+            except (MA.ApiError, ValueError) as e:
+                return self.send(200, {"ok": False, "reason": str(e)})
+        if path == "/api/music/qq/search":             # songs by a search; a play list's link or number pasted gives that list
+            q = (parse_qs(urlparse(self.path).query).get("q") or [""])[0]
+            try:
+                pid = MA.qq_query_is_list(q)
+                if pid:
+                    rows = MA.qq_playlist_rows(pid)
+                    return self.send(200, {"ok": True, "list": pid, "title": MA.qq_playlist_title(pid), "items": rows})
+                return self.send(200, {"ok": True, "items": MA.qq_search_rows(q)})
+            except MA.ApiError as e:
+                return self.send(200, {"ok": False, "reason": str(e)})
+        if path == "/api/music/qq/prefetch":           # have a QQ Music song's file come in (to play it, or the next one)
+            q = parse_qs(urlparse(self.path).query)
+            try:
+                song = MA.qq_song((q.get("mid") or [""])[0], (q.get("q") or ["high"])[0])
+                return self.send(200, {"ok": True, "quality": song.quality, "preview": song.preview})
+            except MA.ApiError as e:
+                return self.send(200, {"ok": False, "reason": str(e)})
+        if path == "/api/music/qq/stream":             # a QQ Music song's file, in byte ranges as it comes in (music_apis.Song)
+            q = parse_qs(urlparse(self.path).query)
+            try:
+                song = MA.qq_song((q.get("mid") or [""])[0], (q.get("q") or ["high"])[0])
+            except MA.ApiError as e:
+                return self.send(404, {"ok": False, "reason": str(e)})
+            total = song.size()
+            if not total:
+                return self.send(502, {"ok": False, "reason": song.err or "QQ 音乐给的文件是空的"})
+            start, end, part = 0, total - 1, False
+            m = re.match(r"bytes=(\d*)-(\d*)$", self.headers.get("Range") or "")
+            if m and (m.group(1) or m.group(2)):
+                if m.group(1):
+                    start = int(m.group(1))
+                    end = min(int(m.group(2)), total - 1) if m.group(2) else total - 1
+                else:                                   # bytes=-N: the last N
+                    start = max(0, total - int(m.group(2)))
+                part = True
+                if start >= total:
+                    self.send_response(416)
+                    self.send_header("Content-Range", f"bytes */{total}")
+                    self.end_headers()
+                    return
+            self.send_response(206 if part else 200)
+            self.send_header("Content-Type", song.ctype)
+            self.send_header("Accept-Ranges", "bytes")
+            self.send_header("Content-Length", str(end - start + 1))
+            if part:
+                self.send_header("Content-Range", f"bytes {start}-{end}/{total}")
+            self.send_header("X-Quality", song.quality)
+            self.send_header("X-Preview", "1" if song.preview else "0")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            pos = start
+            try:
+                while pos <= end:
+                    chunk = song.read(pos, min(MA.CHUNK, end - pos + 1))
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    pos += len(chunk)
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                pass                                    # (the player let go of this range: it does that all the time)
+            return
+        if path == "/api/lyrics/find":                 # the best lyrics for a song by its names (LDDC), as for a followed player
+            q = parse_qs(urlparse(self.path).query)
+            try:
+                res = NP.LM.find((q.get("title") or [""])[0], (q.get("artist") or [""])[0], float((q.get("duration") or ["0"])[0] or 0), (q.get("src") or [""])[0])
+            except Exception as e:
+                res = {"lrc": None, "reason": f"{type(e).__name__}: {e}"[:200]}
+            return self.send(200, res)
+        if path == "/api/music/liked":                 # whether the account likes the song the player is on
+            q = parse_qs(urlparse(self.path).query)
+            return self.send(200, NP.liked_now((q.get("app") or [""])[0]))
         if path == "/api/nowplaying/queue":            # the followed player's play list (QQ 网页跟随 only), for the AM layout
             try:
-                return self.send(200, NP.queue((parse_qs(urlparse(self.path).query).get("app") or [""])[0]))
+                q = parse_qs(urlparse(self.path).query)
+                return self.send(200, NP.queue((q.get("app") or [""])[0], (q.get("list") or [""])[0], (q.get("cache") or [""])[0]))
             except Exception as e:
                 return self.send(200, {"ok": False, "reason": f"{type(e).__name__}: {e}"[:200]})
         if path == "/api/nowplaying/bass":             # live low-frequency level of the system sound, for the pulse
@@ -364,6 +474,15 @@ class Handler(BaseHTTPRequestHandler):
 
             if path == "/api/nowplaying/control":
                 return self.send(200, NP.control(req.get("action"), req.get("position"), req.get("app") or ""))
+
+            if path == "/api/music/login":                  # {svc, channel?} -> a QR code to scan
+                try:
+                    return self.send(200, {"ok": True, **MA.qr_start(req.get("svc") or "", req.get("channel") or "")})
+                except (MA.ApiError, KeyError) as e:
+                    return self.send(200, {"ok": False, "reason": str(e)})
+            if path == "/api/music/logout":
+                MA.logout(req.get("svc") or "")
+                return self.send(200, {"ok": True})
 
             return self.send(404, {"error": "not found"})
         except Exception as e:

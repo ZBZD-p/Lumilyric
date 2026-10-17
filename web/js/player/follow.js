@@ -4,6 +4,7 @@ import { fx, lyricDelay, total } from '../core/settings.js';
 import { render } from '../render/view-dom.js';
 import { pulseGate, pulseHz, setBgDirty } from '../background/background.js';
 import { coverSide, coverVideo, imageSide, setCover, setCoverVideo } from '../background/cover-extract.js';
+import { purelyInstrumental } from '../core/core.js';
 import { createSongFlow } from '../render/song-transition.js';
 import { songStage, useScroll } from '../render/layout-scroll.js';
 import { exporting, setDelay } from '../export/export.js';
@@ -229,17 +230,27 @@ function followHeader(s){                    // the header follows the player at
   $('songTitle').textContent = s.title || lrcName || ' ';
   $('songArtist').textContent = [s.artist, s.album].filter(Boolean).join(' · ') || ' ';
 }
+/* A pure-music song: the sources give "此歌曲为没有填词的纯音乐，请您欣赏" as its one line of lyrics. Such a song, and a
+   song with no lyrics found, show no lyrics, and in the AM layout the cover stands in the middle (frame.js setNoLyrics).
+   Not when the search itself failed (no network ...): the lyrics may be there. */
+const searchFailed = res => !!(res && res.reason && !/^没有找到/.test(res.reason));      // ("没有找到匹配的歌词" is an answer; the rest are errors, or a song that is gone)
 const followFlow = createSongFlow(songStage, {
   scroll: () => useScroll(),
   hasLines: () => song.lines.length > 0,
   blank: s => followBlank(s),
   load: (s, res) => {
+    if (!res.ttml && purelyInstrumental(res.lrc)){ late.setNoLyrics(true); return false; }      // (false: handled as no lyrics)
     if (!followLoad(res.lrc, [s.title, s.artist].filter(Boolean).join(' - '), undefined, res.ttml)) return false;
     followMeta(s);
     followNote(`歌词来自 ${res.source}（${res.verbatim ? '逐字' : '逐行'}）`);
+    late.setNoLyrics(false);
     return true;
   },
-  none: (s, res) => { followBlank(s); followNote((res && res.reason) || '没有找到匹配的歌词'); },
+  none: (s, res) => {
+    followBlank(s);
+    late.setNoLyrics(!searchFailed(res));
+    followNote(purelyInstrumental(res && res.lrc) ? '纯音乐，没有歌词' : (res && res.reason) || '没有找到匹配的歌词');
+  },
 });
 songStage.onEmpty = () => setTimeout(() => followFlow.tick(performance.now()), 0);
 function followTrack(s){
@@ -275,7 +286,7 @@ function followSaveCover(blob, tid, side){
         { method: 'POST', body: blob, headers: { 'Content-Type': blob.type || 'image/jpeg' } }).catch(() => {});
 }
 /* cover: the player's own picture first; a small one (a thumbnail) or none -> search and ask before replacing */
-const COVER_MIN = 400, COVER_ASK = 85, COVER_AUTO = 95;   // px of the shorter side (below it a better cover is looked for); match score (0-100) needed to ask / to replace without asking
+const COVER_MIN = 400, COVER_ASK = 85, COVER_AUTO = 85;   // px of the shorter side (below it a better cover is looked for); match score (0-100) needed to ask / to replace without asking (both 85 now: a match this good is used; asking is left for a picture that could not be set)
 const cvNorm = t => String(t || '').normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
 const cvClean = t => String(t || '').replace(/[\(（\[【《<].*?[\)）\]】》>]/g, ' ').replace(/\s+[-–—]\s+.*$/, '');
 /* the artists of a song, each as it is written and, when the player adds a second name in brackets ("NewJeans (뉴진스)"),
@@ -361,7 +372,7 @@ async function followMotion(s0, my){
     if (my !== followCoverSeq || !followOn) return false;
     if (!await setCoverVideo(blob, `${pick.it.title} · ${pick.it.source}（动态）`)) return false;
     followMoving = { tid: s0.trackId, el: coverVideo };
-    followLyr = (followLyr ? followLyr + ' · ' : '') + `封面已换成 ${pick.it.source} 的动态封面（${pick.sc > COVER_AUTO ? '' : '同一专辑的另一个版本，'}匹配度 ${pick.sc}%）`;
+    followLyr = (followLyr ? followLyr + ' · ' : '') + `封面已换成 ${pick.it.source} 的动态封面（${pick.sc >= COVER_AUTO ? '' : '同一专辑的另一个版本，'}匹配度 ${pick.sc}%）`;
     followStatus();
     return true;
   } catch (e){ return false; }
@@ -396,7 +407,7 @@ async function followCoverSuggest(s, my, hadCover){
     return;
   }
   const pick = sharper[0], best = pick.it, bestSc = pick.sc, blob = pick.blob, side = pick.side;
-  if (bestSc > COVER_AUTO){                               // as good as certain: no question, just use it
+  if (bestSc >= COVER_AUTO){                              // a good enough match: no question, just use it
     const was = coverSide;
     if (await setCover(blob, `${best.title} · ${best.source}`)){
       followSaveCover(blob, s.trackId, coverSide);
@@ -522,6 +533,7 @@ function followBass(j){
 function setFollow(on, keepPref){
   if (on === followOn) return;
   followOn = on;
+  late.setNoLyrics(false);                     // (a player's song without lyrics does not leave the cover in the middle)
   if (!keepPref){ try { localStorage.setItem('lrc-follow', on ? '1' : '0'); } catch(e){} }
   $('followBtn').classList.toggle('on', on);
   $('prevBtn').hidden = $('nextBtn').hidden = !on;       // previous / next only mean something for a player

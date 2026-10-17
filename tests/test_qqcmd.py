@@ -14,6 +14,7 @@ exe = os.path.join(tmp, "QQMusic.exe.bat")
 with open(exe, "w") as f:
     f.write(f"@echo %1 %2 >> \"{log}\"\r\n")      # (a space before >>: "0>>" would be a redirect of handle 0)
 os.environ["QQSEEK_EXE"] = exe
+os.environ["LRC_MUSIC_API_DIR"] = tmp      # (never the real music accounts)
 
 import qqcmd  # noqa: E402
 qqcmd._from_registry = qqcmd._from_common_paths = lambda: None      # never reach a real QQ Music installed here

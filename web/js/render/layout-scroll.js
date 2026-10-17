@@ -3,7 +3,7 @@ import { assignMode, lineTokenTimes, mode, song } from '../core/lyrics.js';
 import { coverGlideNow, fx, karaokeTimes, prof } from '../core/settings.js';
 import { glideAt, glideKick } from '../core/glide.js';
 import { greedy, joinU, lineTexts, tokens, units } from './view-dom.js';
-import { HOLD, SWEEP, canvasMeasurer, clamp01, cubicBezier, drawOnColour, holdGlow, liftWord, rowOffs, setSpriteAlphaMul, spriteCache, sweepActive, sweepPos } from './text-canvas.js';
+import { FLOAT, HOLD, SWEEP, canvasMeasurer, clamp01, cubicBezier, drawOnColour, floatLetter, holdFloat, holdGlow, liftWord, rowOffs, setSpriteAlphaMul, spriteCache, sweepActive, sweepPos } from './text-canvas.js';
 import { createSongStage } from './song-transition.js';
 import { createSeekMotion } from './seek-motion.js';
 import { DOTS, introDots } from './intro-dots.js';
@@ -326,15 +326,20 @@ function drawScrollOne(ctx, W, H, M, t, shiftFn, fade){
             if (q > 0 && q < 1) moving = true;
             const ex = swc - SWo.offs[tk.k];
             if (ex - SE / 2 >= tk.w) lit++;
-            const hg = holdGlow(kar, tk.k, t) * act;
+            const hg = holdGlow(kar, tk.k, t) * act, hf = holdFloat(kar, tk.k) * act;
             if (hg > 0) moving = true;
+            if (hf > 0 && t > kar.st[tk.k] && t < kar.st[tk.k] + kar.hold + FLOAT.dur) moving = true;      // floating: the swell runs along the word
             const parts = [];                            // the letters of a word that lifts letter by letter
-            if (liftWord(tk, Mx, kar, t, SE, (l, s, dx, w) => {
-              const yy = ry - 0.05 * fsx * l * act, xs = x + dx, e = ex - dx;       // e: the sweep edge, relative to this piece
+            if (liftWord(tk, Mx, kar, t, SE, (l, s, dx, w, i, ts) => {
+              const fl = hf > 0 ? floatLetter(hf, t, ts) : null;      // a long last word floats letter by letter: higher, a little larger, and down again
+              const yy = ry - 0.05 * fsx * l * act - (fl ? fl.up * fsx : 0), xs = x + dx, e = ex - dx;       // e: the sweep edge, relative to this piece
+              const grown = fl && fl.sc !== 1 ? fl.sc : 1, cx = xs + w / 2;
+              if (grown !== 1){ ctx.save(); ctx.translate(cx, yy); ctx.scale(grown, grown); ctx.translate(-cx, -yy); }      // (the letters in parts are scaled again when they are put together: their own pictures)
               if (hg > 0) SPx.drawLit(ctx, s, false, xs, yy, hg, e - SE / 2 >= w + 1 ? Infinity : e, SE, true, hg, HOLD.blur * bsx + blur);      // a long last word: a little more light around it, as far as the sweep has come
-              if (s !== tk.s) return parts.push({ s, dx, dy: yy - ry, w });
+              if (s !== tk.s){ if (grown !== 1) ctx.restore(); return parts.push({ s, dx, dy: yy - ry, w, sc: grown }); }
               SPx.drawLit(ctx, s, false, xs, yy, SCROLL.dim, Infinity, 0, false, undefined, blur);
               if (e + SE / 2 > 0) SPx.drawLit(ctx, s, false, xs, yy, act * (drawOnColour ? 1 : 1 - SCROLL.dim), e - SE / 2 >= w + 1 ? Infinity : e, SE, true, SCROLL.dim + (1 - SCROLL.dim) * act, blur);
+              if (grown !== 1) ctx.restore();
             }, blur > 0.3)) moving = true;      // still blurred as the line comes in: in one piece
             if (parts.length) SPx.drawLitGroup(ctx, parts, x, ry, SCROLL.dim, ex + SE / 2 > 0 ? act * (drawOnColour ? 1 : 1 - SCROLL.dim) : 0, ex, SE, SCROLL.dim + (1 - SCROLL.dim) * act, blur, tk.w);
           } else {

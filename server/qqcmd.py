@@ -11,6 +11,7 @@ Found out by the qqseek project (G:\\workspace\\qqmusic-seek); only the two swit
 `/seekto` also starts a paused player.
 """
 import os
+import re
 import subprocess
 import sys
 import time
@@ -89,3 +90,18 @@ def seek(seconds):
 def volume(percent):
     """Set the volume, 0-100."""
     return _run("/volumeto", max(0, min(100, int(round(float(percent))))))
+
+
+def play_song(songid, songtype=0):
+    """Play the song with this number (`/playbysongid`: one song; a list of them would only play the first)."""
+    return _run("/playbysongid", f"cmd_count==1&&id_0=={int(songid)}&&songtype_0=={int(songtype)}")
+
+
+def favorite(songmid, on=True):
+    """Put the song (its "mid", twelve letters and digits) in 我喜欢, or take it out: the player's own heart. Needs the
+    player to be signed in; whether it took cannot be read back from here."""
+    mid = str(songmid or "")
+    if not re.fullmatch(r"[0-9A-Za-z]{8,20}", mid):
+        return False, "歌曲编号不对"
+    return _run("/favor" if on else "/unfavor", mid)
+

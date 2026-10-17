@@ -222,7 +222,7 @@ $('wordLrcBtn').onclick = () => {
 };
 function loadAudio(file){
   setAudioFile(file); setUploadedId(null);
-  if (audio){ audio.pause(); URL.revokeObjectURL(audio.src); }
+  if (audio){ audio.pause(); if (audio.src.startsWith('blob:')) URL.revokeObjectURL(audio.src); else { audio.removeAttribute('src'); audio.load(); } }
   const wasPlaying = playing; setPlaying(false);
   setAudio(new Audio(URL.createObjectURL(file)));
   audio.addEventListener('ended', () => setPlaying(false));
@@ -232,6 +232,21 @@ function loadAudio(file){
   setBase(0); seek(0);
   if (wasPlaying) setPlaying(true);
 }
+/* a song that comes in while it plays (player/online.js: the local program hands it out in byte ranges as it downloads):
+   played from its address at once; its beat and the file for export come when the whole of it is here (setStreamFile) */
+function loadAudioUrl(url, name){
+  setAudioFile(null); setUploadedId(null);
+  if (audio){ audio.pause(); if (audio.src.startsWith('blob:')) URL.revokeObjectURL(audio.src); else { audio.removeAttribute('src'); audio.load(); } }
+  const wasPlaying = playing; setPlaying(false);
+  const a = new Audio();
+  a.preload = 'auto'; a.src = url;
+  setAudio(a);
+  audio.addEventListener('ended', () => setPlaying(false));
+  audio.addEventListener('loadedmetadata', () => { $('status').textContent = '音频已载入：' + name; });
+  setBase(0); seek(0);
+  if (wasPlaying) setPlaying(true);
+}
+function setStreamFile(file){ setAudioFile(file); analyzeBass(file); }
 $('lrcFile').onchange = e => e.target.files[0] && loadLRC(e.target.files[0]);
 $('audioFile').onchange = e => e.target.files[0] && loadAudio(e.target.files[0]);
 document.querySelectorAll('#srcSeg button').forEach(b => b.onclick = () => {
@@ -298,4 +313,4 @@ function setFpsN(v){ return fpsN = v; }   // other modules cannot assign to an i
 function setFpsLast(v){ return fpsLast = v; }   // other modules cannot assign to an imported binding
 
 /* names that modules loaded before this one call or read (core/late.js) */
-Object.assign(late, { poke, loadLRCText, loadTTMLText, applySource, setFpsT0, setFpsN, setFpsLast });
+Object.assign(late, { poke, loadLRCText, loadTTMLText, applySource, setFpsT0, setFpsN, setFpsLast, loadAudio, loadAudioUrl, setStreamFile });      // loadAudio: a song played from a music account (player/online.js) opens like a file

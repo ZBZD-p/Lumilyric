@@ -50,8 +50,20 @@ const useAM = () => !!fx.am && !!fx.cover;
    glide: it draws the state that is set. */
 const AM_HIDE = { dur: 0.8, grow: [0.34, 0.56], drift: 0.05 };     // seconds; the cover's size in the middle (of W, of H); how far the lyrics drift (of W)
 let amHide = null;
+/* A song with no lyrics (pure music, or none found), while following a player: the same as the button, without touching
+   the setting. The cover goes to the middle and grows, and comes back by itself with the next song that has lyrics. */
+let amNoLyrics = false;
+function setNoLyrics(on){
+  on = !!on;
+  if (on === amNoLyrics) return;
+  amNoLyrics = on;
+  late.applyFx && late.applyFx();                    // the button shows it
+  coverPanelDirty = true;
+}
 function amHideNow(){
-  const to = fx.amLyrics === false ? 1 : 0, ms = performance.now();
+  // (the play list opens in the lyrics' place, to the right of the cover: with it open the cover stays on the left whatever the
+  // lyrics are doing, or the two would lie over each other)
+  const to = (fx.amLyrics === false || amNoLyrics) && !document.body.classList.contains('am-queue') ? 1 : 0, ms = performance.now();
   if (!amHide || (typeof late.exporting !== 'undefined' && late.exporting) || matchMedia('(prefers-reduced-motion:reduce)').matches) amHide = { from: to, to, at: 0, k: to };
   if (to !== amHide.to) amHide = { from: amHide.k, to, at: ms, k: amHide.k };
   const p = amHide.at ? clamp01((ms - amHide.at) / 1000 / AM_HIDE.dur) : 1;
@@ -427,4 +439,4 @@ function drawFrameIn(ctx, W, H, M0, M, segs, t, transparent, noBloom, coverR, R,
 function setCoverPanelDirty(v){ return coverPanelDirty = v; }   // other modules cannot assign to an imported binding
 
 /* names that modules loaded before this one call or read (core/late.js) */
-Object.assign(late, { updateCoverPanel, useCoverPanel, layoutTrStep, liveRect, lyricAnchor, drawFrame, setCoverPanelDirty });
+Object.assign(late, { updateCoverPanel, useCoverPanel, layoutTrStep, liveRect, lyricAnchor, drawFrame, setCoverPanelDirty, setNoLyrics, noLyrics: () => amNoLyrics });

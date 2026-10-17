@@ -607,6 +607,52 @@ svg .one{display:none}
 .amqsc{flex:1;overflow-y:auto;scrollbar-width:none;margin:0 -12px;padding:0 12px 22vh;
   -webkit-mask-image:linear-gradient(transparent,#000 14px,#000 calc(100% - 18vh),transparent);mask-image:linear-gradient(transparent,#000 14px,#000 calc(100% - 18vh),transparent)}
 .amqsc::-webkit-scrollbar{display:none}
+/* QQ Music (the program): its play list is made (what was played, a play list that is named); where it comes from is
+   set in this place, instead of the shuffle and repeat buttons (it has no play mode to give) */
+.amqset{margin:0 0 14px}
+.amq.qqd .amqcaps,.amq.onl .amqcaps{display:none}
+/* playing QQ Music here (not following): a search box, and the account's play lists as a row of chips */
+.amqchips{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;padding:2px 0 4px}
+.amqchips::-webkit-scrollbar{display:none}
+.amqchip{all:unset;flex:none;box-sizing:border-box;height:30px;padding:0 13px;border-radius:999px;background:rgba(255,255,255,.12);color:rgba(255,255,255,.88);font-size:12.5px;cursor:pointer;display:flex;align-items:center;gap:6px;white-space:nowrap}
+.amqchip:hover{background:rgba(255,255,255,.2)}
+.amqchip[aria-pressed="true"]{background:rgba(255,255,255,.88);color:#111}
+.amqchip small{opacity:.6;font-size:11px}
+.amqchip:focus-visible{outline:2px solid #fff;outline-offset:2px}
+.amqrow{display:flex;gap:8px;margin:0 0 6px}
+.amqrow input{flex:1;min-width:0;height:34px;box-sizing:border-box;padding:0 14px;border:0;border-radius:999px;background:rgba(255,255,255,.14);box-shadow:inset 0 0 0 .5px rgba(255,255,255,.16);color:#fff;font:inherit;font-size:13px;outline:none}
+.amqrow input::placeholder{color:rgba(255,255,255,.45)}
+.amqrow input:focus-visible{box-shadow:inset 0 0 0 1.5px rgba(255,255,255,.7)}
+.amqrow button{all:unset;box-sizing:border-box;height:34px;padding:0 16px;border-radius:999px;background:rgba(255,255,255,.22);color:#fff;font-size:13px;cursor:pointer;display:flex;align-items:center}
+.amqrow button:hover{background:rgba(255,255,255,.32)}
+.amqrow button:focus-visible{outline:2px solid #fff;outline-offset:2px}
+/* what a click in the list did: asked, then done (the song changed) or not */
+.amqtoast{display:flex;align-items:center;gap:9px;margin:0 0 10px;padding:8px 14px;border-radius:14px;background:rgba(255,255,255,.16);box-shadow:inset 0 0 0 .5px rgba(255,255,255,.18);font-size:13px;line-height:1.4;color:#fff}
+.amqtoast[hidden]{display:none}
+.amqtoast::before{content:"";flex:none;width:14px;height:14px;border-radius:50%;box-sizing:border-box}
+.amqtoast.busy::before{border:2px solid rgba(255,255,255,.35);border-top-color:#fff;animation:amqSpin .8s linear infinite}
+.amqtoast.ok::before{background:#fff;-webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5' fill='none' stroke='%23000' stroke-width='3.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/contain no-repeat;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5' fill='none' stroke='%23000' stroke-width='3.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/contain no-repeat}
+.amqtoast.err{background:rgba(255,120,100,.28);box-shadow:inset 0 0 0 .5px rgba(255,160,140,.5)}
+.amqtoast.err::before{background:#ffb4a8;-webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M6 6l12 12M18 6L6 18' fill='none' stroke='%23000' stroke-width='3.2' stroke-linecap='round'/%3E%3C/svg%3E") center/contain no-repeat;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M6 6l12 12M18 6L6 18' fill='none' stroke='%23000' stroke-width='3.2' stroke-linecap='round'/%3E%3C/svg%3E") center/contain no-repeat}
+@keyframes amqSpin{to{transform:rotate(360deg)}}
+.amqi.pending{opacity:1!important}
+.amqi.pending .t,.amqi.pending .a{color:#fff}
+.amqi.pending .x{visibility:hidden}
+.amqi.pending::after{content:"";position:absolute;right:7px;top:50%;width:15px;height:15px;margin-top:-8px;border-radius:50%;box-sizing:border-box;border:2px solid rgba(255,255,255,.35);border-top-color:#fff;animation:amqSpin .8s linear infinite}
+.amqi.pending::before{background:rgba(255,255,255,.16)}
+/* 音乐账号 (settings): one line per service: its name, who is signed in, sign in / out */
+.acctrow{display:grid;grid-template-columns:6.2em 1fr auto;align-items:center;gap:10px;font-size:13px}
+.acctrow b{font-weight:600}
+.acctrow .acctst{color:var(--dim);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.acctrow .acctst.on{color:var(--fg)}
+.acctpanel{max-width:340px}
+.acctqr{display:grid;place-items:center;padding:6px 0}
+.acctqr img{width:200px;height:200px;padding:10px;border-radius:12px;background:#fff;image-rendering:pixelated}
+.acctqr img:not([src]){visibility:hidden}
+.amqnote{margin:0 0 4px;padding:0 4px;font-size:12px;line-height:1.5;color:rgba(255,255,255,.55)}
+.amqnote.err{color:#ffb4a8}
+.amqnote button{all:unset;cursor:pointer;color:rgba(255,255,255,.85);text-decoration:underline;text-underline-offset:3px}
+.amqnote button:focus-visible{outline:2px solid #fff;outline-offset:2px}
 .amqsec+.amqsec{margin-top:26px}
 .amqh{display:flex;flex-direction:column;gap:2px;padding:0 0 9px;border-bottom:.5px solid rgba(255,255,255,.16)}
 .amqh b{font-size:15px;font-weight:700;letter-spacing:.01em}

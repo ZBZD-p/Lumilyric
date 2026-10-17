@@ -8,6 +8,7 @@ export {
   duetSides,
   mergeSimultaneous,
   parseLRC,
+  purelyInstrumental,
   sungEnd,
 };
 
@@ -148,6 +149,13 @@ function mergeSimultaneous(lines){
     out.push(A = B); tail = null;
   }
   return out;
+}
+/* A pure-music song: the sources give "此歌曲为没有填词的纯音乐，请您欣赏" as its one line of lyrics (an LRC text). Used while
+   following a player (player/follow.js): such a song shows no lyrics. */
+const PURE_MUSIC = /纯音乐|没有填词|无歌词|请欣赏|请您欣赏|instrumental|no lyrics/i;
+function purelyInstrumental(text){
+  const body = String(text || '').split(/\r?\n/).filter(l => /^\s*\[\d+:\d+/.test(l)).map(l => l.replace(/\[[^\]]*\]|<[^>]*>/g, '').trim()).filter(Boolean);
+  return body.length > 0 && body.length <= 4 && body.some(l => PURE_MUSIC.test(l));
 }
 function parseLRC(text){
   const meta = {}, raw = [];
